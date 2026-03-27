@@ -1,9 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 
-// ── Config ────────────────────────────────────────────────────────────────────
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 function storage(key, val) {
   if (val !== undefined) localStorage.setItem(key, JSON.stringify(val));
   else { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } }
@@ -19,47 +17,16 @@ async function apiFetch(path, opts = {}) {
   return data;
 }
 
-// ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
-  // Credentials — check URL params first (sent by Chrome extension)
-  const [creds, setCreds] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    const fromExt = params.get("autoConnect") === "1";
-    if (fromExt) {
-      return {
-        leagueId: params.get("leagueId") || "",
-        espnS2:   params.get("espnS2")   || "",
-        swid:     params.get("swid")     || "",
-      };
-    }
-    return storage("naylorade_creds") || { leagueId: "", espnS2: "", swid: "" };
-  });
-  const [setupOpen, setSetupOpen] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [credsError, setCredsError] = useState(null);
-  const [autoConnectDone, setAutoConnectDone] = useState(false);
-
-  // Roster + games
   const [roster, setRoster] = useState(() => storage("naylorade_roster") || []);
   const [games, setGames] = useState([]);
   const [gamesLoading, setGamesLoading] = useState(false);
   const [gamesError, setGamesError] = useState(null);
-
-  // Selected game + live data
   const [selectedGame, setSelectedGame] = useState(null);
   const [liveData, setLiveData] = useState({});
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [rosterText, setRosterText] = useState(() => (storage("naylorade_roster") || []).join("\n"));
 
-  // ── Auto-connect if coming from Chrome extension ───────────────────────────
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("autoConnect") === "1" && !autoConnectDone && !roster.length) {
-      setAutoConnectDone(true);
-      window.history.replaceState({}, "", window.location.pathname);
-      setTimeout(() => connectESPN(), 100);
-    }
-  }, []);
-
-  // ── Load games ──────────────────────────────────────────────────────────────
   const loadGames = useCallback(async (rosterList) => {
     if (!rosterList?.length) return;
     setGamesLoading(true);
@@ -76,29 +43,21 @@ export default function App() {
     }
   }, []);
 
-  // ── Connect ESPN ────────────────────────────────────────────────────────────
-  async function connectESPN() {
-    setConnecting(true);
-    setCredsError(null);
-    try {
-      const data = await apiFetch("/api/roster", {
-        method: "POST",
-        body: JSON.stringify(creds),
-      });
-      const players = data.players || [];
-      setRoster(players);
-      storage("naylorade_roster", players);
-      storage("naylorade_creds", creds);
-      setSetupOpen(false);
-      await loadGames(players);
-    } catch (e) {
-      setCredsError(e.message);
-    } finally {
-      setConnecting(false);
-    }
+  function saveRoster() {
+    const players = rosterText.split("\n").map(p => p.trim()).filter(Boolean);
+    setRoster(players);
+    storage("naylorade_roster", players);
+    setSetupOpen(false);
+    loadGames(players);
   }
 
-  // ── Poll games every 30s ────────────────────────────────────────────────────
+  function clearRoster() {
+    setRoster([]);
+    setRosterText("");
+    setGames([]);
+    storage("naylorade_roster", []);
+  }
+
   useEffect(() => {
     if (!roster.length) return;
     loadGames(roster);
@@ -106,18 +65,15 @@ export default function App() {
     return () => clearInterval(interval);
   }, [roster, loadGames]);
 
-  // ── Poll live feed for selected live game every 15s ─────────────────────────
   useEffect(() => {
     if (!selectedGame || selectedGame.status !== "Live") return;
     const id = selectedGame.id;
-
     async function fetchLive() {
       try {
         const data = await apiFetch(`/api/games/${id}/live`);
         setLiveData(prev => ({ ...prev, [id]: data }));
-      } catch { /* silent */ }
+      } catch { }
     }
-
     fetchLive();
     const interval = setInterval(fetchLive, 15_000);
     return () => clearInterval(interval);
@@ -146,22 +102,23 @@ export default function App() {
         .game-card.selected { background: var(--surface); border-left: 2px solid var(--text-primary); }
         .watch-btn { display: flex; align-items: center; gap: 10px; padding: 14px 20px; background: var(--text-primary); color: var(--bg); text-decoration: none; font-size: 12px; font-weight: 500; letter-spacing: 0.04em; margin-bottom: 28px; transition: opacity 0.15s; }
         .watch-btn:hover { opacity: 0.82; }
-        .setup-input { background: var(--bg); border: 1px solid var(--border-strong); color: var(--text-primary); padding: 8px 12px; font-family: var(--font-mono); font-size: 12px; outline: none; width: 100%; transition: border-color 0.15s; border-radius: 0; }
-        .setup-input:focus { border-color: var(--text-primary); }
         .btn-primary { background: var(--text-primary); color: var(--bg); border: none; padding: 10px 28px; font-family: var(--font-sans); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; cursor: pointer; transition: opacity 0.15s; }
-        .btn-primary:hover:not(:disabled) { opacity: 0.82; }
-        .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
-        .btn-outline { background: transparent; border: 1px solid var(--border-strong); color: var(--text-secondary); padding: 5px 14px; cursor: pointer; font-size: 11px; font-weight: 400; transition: all 0.15s; }
+        .btn-primary:hover { opacity: 0.82; }
+        .btn-outline { background: transparent; border: 1px solid var(--border-strong); color: var(--text-secondary); padding: 5px 14px; cursor: pointer; font-size: 11px; transition: all 0.15s; font-family: var(--font-sans); }
         .btn-outline:hover { border-color: var(--text-primary); color: var(--text-primary); }
+        .btn-ghost { background: transparent; border: none; color: var(--text-muted); padding: 5px 10px; cursor: pointer; font-size: 11px; font-family: var(--font-sans); transition: color 0.15s; }
+        .btn-ghost:hover { color: var(--text-primary); }
         .player-chip { display: inline-flex; align-items: center; font-size: 10px; font-weight: 500; padding: 3px 10px; border-radius: 100px; border: 1px solid var(--border-strong); color: var(--text-secondary); background: var(--surface); }
         .gc-player-card { flex: 1; min-width: 140px; padding: 14px 16px; border: 1px solid var(--border); background: var(--surface); transition: border-color 0.15s; }
         .gc-player-card.active { border-color: var(--text-primary); }
+        .roster-textarea { width: 100%; height: 220px; background: var(--bg); border: 1px solid var(--border-strong); color: var(--text-primary); padding: 12px; font-family: var(--font-mono); font-size: 12px; outline: none; resize: none; line-height: 1.8; transition: border-color 0.15s; border-radius: 0; }
+        .roster-textarea:focus { border-color: var(--text-primary); }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.25} }
         .live-dot { animation: pulse 1.8s ease-in-out infinite; }
         @keyframes fadeSlide { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:translateY(0)} }
         .fadeslide { animation: fadeSlide 0.5s ease; }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .spinner { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--text-primary); border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; }
+        .spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--text-primary); border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; vertical-align: middle; }
       `}</style>
 
       <div style={{ background: "var(--bg)", minHeight: "100vh" }}>
@@ -170,52 +127,43 @@ export default function App() {
         <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 28px", borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
             <span style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-0.02em" }}>Naylorade</span>
-            <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 400, letterSpacing: "0.06em", textTransform: "uppercase" }}>Stream Guide</span>
+            <span style={{ fontSize: 11, color: "var(--text-muted)", letterSpacing: "0.06em", textTransform: "uppercase" }}>Stream Guide</span>
           </div>
           <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
             {new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {roster.length > 0 && (
-              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              <span style={{ fontSize: 11, color: "var(--text-muted)", marginRight: 4 }}>
                 {gamesLoading ? <span className="spinner" /> : `${playingCount} playing today`}
               </span>
             )}
+            {roster.length > 0 && <button className="btn-ghost" onClick={clearRoster}>Clear</button>}
             <button className="btn-outline" onClick={() => setSetupOpen(o => !o)}>
-              {roster.length ? "⚙ ESPN" : "Connect ESPN"}
+              {roster.length ? "Edit Roster" : "Set Up Roster"}
             </button>
           </div>
         </header>
 
-        {/* Setup Panel */}
+        {/* Roster Setup Panel */}
         {setupOpen && (
-          <div style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)", padding: "20px 28px" }}>
-            <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16 }}>ESPN Connection</div>
-            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", maxWidth: 680 }}>
-              {[
-                ["League ID", "text", "leagueId", "123456"],
-                ["espn_s2 Cookie", "password", "espnS2", "Paste from browser..."],
-                ["SWID", "text", "swid", "{XXXXXXXX-XXXX-...}"],
-              ].map(([label, type, key, ph]) => (
-                <div key={key} style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 180 }}>
-                  <label style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 500, letterSpacing: "0.06em" }}>{label}</label>
-                  <input
-                    className="setup-input"
-                    type={type}
-                    placeholder={ph}
-                    value={creds[key]}
-                    onChange={e => setCreds(c => ({ ...c, [key]: e.target.value }))}
-                  />
-                </div>
-              ))}
+          <div style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)", padding: "24px 28px", maxWidth: 500 }}>
+            <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
+              Your Roster
             </div>
-            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 12, lineHeight: 1.7 }}>
-              Chrome → DevTools → Application → Cookies → ESPN.com → copy <code style={{ fontFamily: "var(--font-mono)" }}>espn_s2</code> and <code style={{ fontFamily: "var(--font-mono)" }}>SWID</code>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 14, lineHeight: 1.6 }}>
+              Enter one player name per line, exactly as they appear on ESPN.
             </div>
-            {credsError && <div style={{ marginTop: 10, fontSize: 12, color: "#c0392b" }}>⚠ {credsError}</div>}
-            <button className="btn-primary" style={{ marginTop: 16 }} disabled={connecting} onClick={connectESPN}>
-              {connecting ? "Connecting..." : "Load Roster"}
-            </button>
+            <textarea
+              className="roster-textarea"
+              placeholder={"Shohei Ohtani\nPaul Skenes\nGunnar Henderson\n..."}
+              value={rosterText}
+              onChange={e => setRosterText(e.target.value)}
+            />
+            <div style={{ display: "flex", gap: 10, marginTop: 14, alignItems: "center" }}>
+              <button className="btn-primary" onClick={saveRoster}>Save Roster</button>
+              <button className="btn-ghost" onClick={() => setSetupOpen(false)}>Cancel</button>
+            </div>
           </div>
         )}
 
@@ -223,29 +171,28 @@ export default function App() {
         {!roster.length && !setupOpen && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "calc(100vh - 57px)", gap: 14 }}>
             <div style={{ fontSize: 32 }}>⚾</div>
-            <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.01em" }}>Connect your ESPN league</div>
-            <div style={{ fontSize: 13, color: "var(--text-muted)" }}>We'll filter today's games to only your players</div>
+            <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.01em" }}>Add your fantasy roster</div>
+            <div style={{ fontSize: 13, color: "var(--text-muted)", textAlign: "center", maxWidth: 300, lineHeight: 1.6 }}>
+              Enter your players and we'll filter today's MLB games to only the ones that matter
+            </div>
             <button className="btn-primary" style={{ marginTop: 8 }} onClick={() => setSetupOpen(true)}>Get Started</button>
           </div>
         )}
 
         {/* Main layout */}
         {roster.length > 0 && (
-          <div style={{ display: "flex", height: setupOpen ? "calc(100vh - 196px)" : "calc(100vh - 57px)", overflow: "hidden" }}>
+          <div style={{ display: "flex", height: setupOpen ? "calc(100vh - 380px)" : "calc(100vh - 57px)", overflow: "hidden" }}>
 
             {/* Left panel */}
             <div style={{ width: 300, borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg)" }}>
               <div style={{ padding: "10px 20px", fontSize: 10, fontWeight: 500, letterSpacing: "0.1em", color: "var(--text-muted)", textTransform: "uppercase", borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
                 Today's Games
               </div>
-
               <div style={{ overflowY: "auto", flex: 1 }}>
-                {gamesError && (
-                  <div style={{ padding: "16px 20px", fontSize: 12, color: "#c0392b" }}>⚠ {gamesError}</div>
-                )}
+                {gamesError && <div style={{ padding: "16px 20px", fontSize: 12, color: "#c0392b" }}>⚠ {gamesError}</div>}
                 {!gamesLoading && !gamesError && games.length === 0 && (
                   <div style={{ padding: "24px 20px", fontSize: 13, color: "var(--text-muted)", lineHeight: 1.6 }}>
-                    No games with your players today. Enjoy the day off.
+                    No games with your players today. Day off!
                   </div>
                 )}
                 {games.map(game => (
@@ -253,16 +200,16 @@ export default function App() {
                 ))}
               </div>
 
-              {/* Roster */}
+              {/* Roster strip */}
               <div style={{ borderTop: "1px solid var(--border)", padding: "14px 20px", background: "var(--surface)" }}>
                 <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: "0.1em", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 10 }}>Roster</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 180, overflowY: "auto" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 160, overflowY: "auto" }}>
                   {roster.map(p => {
                     const isPlaying = games.some(g => g.fantasyPlayers?.includes(p));
                     return (
                       <div key={p} style={{ display: "flex", alignItems: "center", gap: 8, opacity: isPlaying ? 1 : 0.35 }}>
                         <div style={{ width: 5, height: 5, borderRadius: "50%", background: isPlaying ? "var(--text-primary)" : "var(--border-strong)", flexShrink: 0 }} />
-                        <span style={{ fontSize: 11, fontWeight: isPlaying ? 500 : 400, color: isPlaying ? "var(--text-primary)" : "var(--text-muted)" }}>{p}</span>
+                        <span style={{ fontSize: 11, fontWeight: isPlaying ? 500 : 400 }}>{p}</span>
                       </div>
                     );
                   })}
@@ -284,7 +231,6 @@ export default function App() {
   );
 }
 
-// ── GameCard ──────────────────────────────────────────────────────────────────
 function GameCard({ game, selected, onClick }) {
   const isLive = game.status === "Live";
   return (
@@ -293,7 +239,7 @@ function GameCard({ game, selected, onClick }) {
         {isLive ? (
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <div className="live-dot" style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--text-primary)", flexShrink: 0 }} />
-            <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-primary)" }}>Live · {game.inning}</span>
+            <span style={{ fontSize: 11, fontWeight: 600 }}>Live · {game.inning}</span>
           </div>
         ) : (
           <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{game.time}</span>
@@ -302,7 +248,6 @@ function GameCard({ game, selected, onClick }) {
           {game.broadcast?.name}
         </span>
       </div>
-
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
         {[game.awayTeam, null, game.homeTeam].map((team, i) =>
           team === null
@@ -318,7 +263,6 @@ function GameCard({ game, selected, onClick }) {
             )
         )}
       </div>
-
       <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
         {(game.fantasyPlayers || []).map(p => (
           <span key={p} className="player-chip">{p.split(" ").slice(-1)[0]}</span>
@@ -328,19 +272,16 @@ function GameCard({ game, selected, onClick }) {
   );
 }
 
-// ── Gamecast ──────────────────────────────────────────────────────────────────
 function Gamecast({ game, live }) {
   const isLive = game.status === "Live";
-  const batter  = live?.currentBatter  || game.currentBatter;
-  const pitcher = live?.currentPitcher || game.currentPitcher;
+  const batter = live?.currentBatter;
+  const pitcher = live?.currentPitcher;
   const lastPlay = live?.lastPlay || game.lastPlay;
-  const count    = live?.count;
-  const bases    = live?.bases;
+  const count = live?.count;
+  const bases = live?.bases;
 
   return (
     <div style={{ padding: 36, maxWidth: 700 }}>
-
-      {/* Score header */}
       <div style={{ marginBottom: 28 }}>
         <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: "0.1em", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 14 }}>
           {isLive ? `Live · ${game.inning}` : `Today · ${game.time}`}
@@ -362,13 +303,11 @@ function Gamecast({ game, live }) {
         </div>
       </div>
 
-      {/* Watch button */}
       <a href={game.broadcast?.url || "#"} target="_blank" rel="noreferrer" className="watch-btn">
         Watch on {game.broadcast?.name}
         <span style={{ marginLeft: "auto", opacity: 0.45 }}>↗</span>
       </a>
 
-      {/* Your players */}
       <Section title="Your Players">
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {(game.fantasyPlayers || []).map(p => {
@@ -386,7 +325,6 @@ function Gamecast({ game, live }) {
         </div>
       </Section>
 
-      {/* Count (live only) */}
       {isLive && count && (
         <Section title="At Bat">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -410,16 +348,12 @@ function Gamecast({ game, live }) {
         </Section>
       )}
 
-      {/* Last play */}
       {lastPlay && (
         <Section title={isLive ? "Last Play" : "Game Note"}>
-          <p key={lastPlay} className="fadeslide" style={{ fontSize: 15, fontWeight: 400, lineHeight: 1.7, color: "var(--text-primary)" }}>
-            {lastPlay}
-          </p>
+          <p key={lastPlay} className="fadeslide" style={{ fontSize: 15, lineHeight: 1.7 }}>{lastPlay}</p>
         </Section>
       )}
 
-      {/* Diamond (live only) */}
       {isLive && bases && (
         <Section title="On Base">
           <Diamond bases={bases} />
@@ -437,13 +371,9 @@ function Diamond({ bases }) {
       <polygon points="55,8 95,48 55,88 15,48" fill="none" stroke={stroke} strokeWidth="1.5" />
       <line x1="55" y1="88" x2="55" y2="8" stroke="#e8e6e2" strokeWidth="1" />
       <line x1="15" y1="48" x2="95" y2="48" stroke="#e8e6e2" strokeWidth="1" />
-      {/* 2B */}
       <rect x="49" y="2" width="12" height="12" rx="2" fill={fill(bases.second)} stroke={stroke} strokeWidth="1" transform="rotate(45 55 8)" />
-      {/* 1B */}
       <rect x="89" y="42" width="12" height="12" rx="2" fill={fill(bases.first)} stroke={stroke} strokeWidth="1" transform="rotate(45 95 48)" />
-      {/* 3B */}
       <rect x="9" y="42" width="12" height="12" rx="2" fill={fill(bases.third)} stroke={stroke} strokeWidth="1" transform="rotate(45 15 48)" />
-      {/* Home */}
       <polygon points="55,90 50,86 52,80 58,80 60,86" fill="#1a1917" />
     </svg>
   );

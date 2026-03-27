@@ -76,18 +76,15 @@ export default function App() {
         // Check last play — only add to feed if player was batting or pitching (offensive plays only)
         const play = data.lastPlay;
         if (play) {
-          const batterLastName = data.lastPlayBatter?.split(" ").slice(-1)[0]?.toLowerCase();
-          const pitcherLastName = data.lastPlayPitcher?.split(" ").slice(-1)[0]?.toLowerCase();
-          const matchedPlayer = currentRoster.find(p => {
-            const lastName = p.split(" ").slice(-1)[0].toLowerCase();
-            return lastName === batterLastName || lastName === pitcherLastName;
-          });
+          const matchedPlayers = currentRoster.filter(p =>
+            p === data.lastPlayBatter || p === data.lastPlayPitcher
+          );
 
-          if (matchedPlayer) {
-            const playId = `${game.id}-${play.slice(0, 40)}`;
+          const gameLabel = `${game.awayTeam.abbr} @ ${game.homeTeam.abbr}`;
+          for (const matchedPlayer of matchedPlayers) {
+            const playId = `${game.id}-${matchedPlayer}-${play.slice(0, 40)}`;
             if (!seenPlays.current.has(playId)) {
               seenPlays.current.add(playId);
-              const gameLabel = `${game.awayTeam.abbr} @ ${game.homeTeam.abbr}`;
               setFeed(prev => [{
                 id: playId,
                 time: timeNow(),

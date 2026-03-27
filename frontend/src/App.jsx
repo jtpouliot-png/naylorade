@@ -73,12 +73,14 @@ export default function App() {
         const data = await apiFetch(`/api/games/${game.id}/live`);
         updates[game.id] = data;
 
-        // Check last play for fantasy player mentions
+        // Check last play — only add to feed if player was batting or pitching (offensive plays only)
         const play = data.lastPlay;
         if (play) {
+          const batterLastName = data.lastPlayBatter?.split(" ").slice(-1)[0]?.toLowerCase();
+          const pitcherLastName = data.lastPlayPitcher?.split(" ").slice(-1)[0]?.toLowerCase();
           const matchedPlayer = currentRoster.find(p => {
-            const lastName = p.split(" ").slice(-1)[0];
-            return play.toLowerCase().includes(lastName.toLowerCase());
+            const lastName = p.split(" ").slice(-1)[0].toLowerCase();
+            return lastName === batterLastName || lastName === pitcherLastName;
           });
 
           if (matchedPlayer) {

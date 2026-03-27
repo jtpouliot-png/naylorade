@@ -186,13 +186,18 @@ def parse_live_feed(feed):
     current = lp.get("currentPlay", {})
     last_plays = lp.get("allPlays", [])
 
-    # Last completed play description
+    # Last completed play description + who was batting/pitching in it
     last_play_desc = None
+    last_play_batter = None
+    last_play_pitcher = None
     for play in reversed(last_plays):
         about = play.get("about", {})
         if about.get("isComplete"):
             result = play.get("result", {})
             last_play_desc = result.get("description")
+            matchup = play.get("matchup", {})
+            last_play_batter = matchup.get("batter", {}).get("fullName")
+            last_play_pitcher = matchup.get("pitcher", {}).get("fullName")
             break
 
     # Current batter / pitcher
@@ -215,6 +220,8 @@ def parse_live_feed(feed):
         "currentBatter": batter,
         "currentPitcher": pitcher,
         "lastPlay": last_play_desc,
+        "lastPlayBatter": last_play_batter,
+        "lastPlayPitcher": last_play_pitcher,
         "count": {
             "balls": count.get("balls", 0),
             "strikes": count.get("strikes", 0),

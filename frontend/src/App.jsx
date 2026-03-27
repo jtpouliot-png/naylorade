@@ -21,11 +21,23 @@ async function apiFetch(path, opts = {}) {
 
 // ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
-  // Credentials
-  const [creds, setCreds] = useState(() => storage("naylorade_creds") || { leagueId: "", espnS2: "", swid: "" });
+  // Credentials — check URL params first (sent by Chrome extension)
+  const [creds, setCreds] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromExt = params.get("autoConnect") === "1";
+    if (fromExt) {
+      return {
+        leagueId: params.get("leagueId") || "",
+        espnS2:   params.get("espnS2")   || "",
+        swid:     params.get("swid")     || "",
+      };
+    }
+    return storage("naylorade_creds") || { leagueId: "", espnS2: "", swid: "" };
+  });
   const [setupOpen, setSetupOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [credsError, setCredsError] = useState(null);
+  const [autoConnectDone, setAutoConnectDone] = useState(false);
 
   // Roster + games
   const [roster, setRoster] = useState(() => storage("naylorade_roster") || []);
@@ -36,6 +48,16 @@ export default function App() {
   // Selected game + live data
   const [selectedGame, setSelectedGame] = useState(null);
   const [liveData, setLiveData] = useState({});
+
+  // ── Auto-connect if coming from Chrome extension ───────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("autoConnect") === "1" && !autoConnectDone && !roster.length) {
+      setAutoConnectDone(true);
+      window.history.replaceState({}, "", window.location.pathname);
+      setTimeout(() => connectESPN(), 100);
+    }
+  }, []);
 
   // ── Load games ──────────────────────────────────────────────────────────────
   const loadGames = useCallback(async (rosterList) => {

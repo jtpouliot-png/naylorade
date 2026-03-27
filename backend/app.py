@@ -262,11 +262,20 @@ def get_roster():
         return jsonify({"players": players})
     except requests.HTTPError as e:
         status = e.response.status_code if e.response else 500
+        body = ""
+        try:
+            body = e.response.text[:500]
+        except Exception:
+            pass
+        print(f"ESPN HTTP error {status}: {body}", flush=True)
         if status == 401:
-            return jsonify({"error": "Invalid ESPN credentials — check your espn_s2 and SWID cookies"}), 401
-        return jsonify({"error": f"ESPN API error: {status}"}), status
+            return jsonify({"error": "Invalid ESPN credentials", "detail": body}), 401
+        return jsonify({"error": f"ESPN API error: {status}", "detail": body}), status
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        import traceback
+        tb = traceback.format_exc()
+        print(f"ESPN error: {tb}", flush=True)
+        return jsonify({"error": str(e), "traceback": tb}), 500
 
 
 @app.route("/api/games", methods=["GET"])

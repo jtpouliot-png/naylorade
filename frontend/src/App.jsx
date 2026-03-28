@@ -51,7 +51,7 @@ export default function App() {
           if (!seenPlays.current.has(playId)) {
             seenPlays.current.add(playId);
             const t = play.startTime ? new Date(play.startTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
-            historyItems.push({ id: playId, time: t, player, game: gameLabel, text: play.description });
+            historyItems.push({ id: playId, time: t, player, game: gameLabel, text: play.description, inning: play.inning, half: play.half, outs: play.outs });
           }
         }
       } catch { }
@@ -142,6 +142,9 @@ export default function App() {
                 player: matchedPlayer,
                 game: gameLabel,
                 text: play,
+                inning: data.lastPlayInning,
+                half: data.lastPlayHalf,
+                outs: data.lastPlayOuts,
               }, ...prev].slice(0, 100));
             }
           }
@@ -359,14 +362,32 @@ export default function App() {
   );
 }
 
+function ordinal(n) {
+  if (n === 1) return "1st";
+  if (n === 2) return "2nd";
+  if (n === 3) return "3rd";
+  return `${n}th`;
+}
+
 function FeedItem({ item }) {
+  const situation = item.inning != null
+    ? `${item.half === "top" ? "Top" : "Bot"} ${ordinal(item.inning)} · ${item.outs} ${item.outs === 1 ? "out" : "outs"}`
+    : null;
   return (
     <div className="feed-item" style={{ padding: "12px 18px", borderBottom: "1px solid var(--border)" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-primary)" }}>{item.player.split(" ").slice(-1)[0]}</span>
         <span style={{ fontSize: 10, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>{item.time}</span>
       </div>
-      <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 5, letterSpacing: "0.04em" }}>{item.game}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+        <span style={{ fontSize: 10, color: "var(--text-muted)", letterSpacing: "0.04em" }}>{item.game}</span>
+        {situation && (
+          <>
+            <span style={{ fontSize: 10, color: "var(--border-strong)" }}>·</span>
+            <span style={{ fontSize: 10, fontWeight: 500, color: "var(--text-secondary)" }}>{situation}</span>
+          </>
+        )}
+      </div>
       <div style={{ fontSize: 12, color: "var(--text-primary)", lineHeight: 1.6 }}>{item.text}</div>
     </div>
   );

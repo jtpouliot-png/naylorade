@@ -219,6 +219,9 @@ def parse_live_feed(feed, roster_names=None):
     last_play_desc = None
     last_play_batter = None
     last_play_pitcher = None
+    last_play_inning = None
+    last_play_half = None
+    last_play_outs = None
     for play in reversed(last_plays):
         about = play.get("about", {})
         if about.get("isComplete"):
@@ -227,6 +230,9 @@ def parse_live_feed(feed, roster_names=None):
             matchup = play.get("matchup", {})
             last_play_batter = matchup.get("batter", {}).get("fullName")
             last_play_pitcher = matchup.get("pitcher", {}).get("fullName")
+            last_play_inning = about.get("inning")
+            last_play_half = about.get("halfInning")
+            last_play_outs = about.get("outs")
             break
 
     # Current batter / pitcher
@@ -263,6 +269,9 @@ def parse_live_feed(feed, roster_names=None):
                         "batter": play_batter,
                         "pitcher": play_pitcher,
                         "startTime": about.get("startTime", ""),
+                        "inning": about.get("inning"),
+                        "half": about.get("halfInning"),
+                        "outs": about.get("outs"),
                     })
 
     return {
@@ -271,6 +280,9 @@ def parse_live_feed(feed, roster_names=None):
         "lastPlay": last_play_desc,
         "lastPlayBatter": last_play_batter,
         "lastPlayPitcher": last_play_pitcher,
+        "lastPlayInning": last_play_inning,
+        "lastPlayHalf": last_play_half,
+        "lastPlayOuts": last_play_outs,
         "count": {
             "balls": count.get("balls", 0),
             "strikes": count.get("strikes", 0),

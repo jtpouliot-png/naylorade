@@ -26,7 +26,6 @@ export default function App() {
   const [games, setGames] = useState([]);
   const [gamesLoading, setGamesLoading] = useState(false);
   const [gamesError, setGamesError] = useState(null);
-  const [selectedGame, setSelectedGame] = useState(null);
   const [liveData, setLiveData] = useState({});
   const [setupOpen, setSetupOpen] = useState(false);
   const [rosterText, setRosterText] = useState(() => (storage("naylorade_roster") || []).join("\n"));
@@ -41,7 +40,6 @@ export default function App() {
       const param = encodeURIComponent(rosterList.join(","));
       const data = await apiFetch(`/api/games?roster=${param}`);
       setGames(data.games || []);
-      setSelectedGame(g => g || data.games?.[0] || null);
     } catch (e) {
       setGamesError(e.message);
     } finally {
@@ -114,8 +112,8 @@ export default function App() {
     return () => clearInterval(interval);
   }, [games, roster, pollAllLive]);
 
-  const live = selectedGame ? liveData[selectedGame.id] : null;
-  const playingCount = roster.filter(p => games.some(g => g.fantasyPlayers?.some(fp => fp.name === p))).length;
+  const myGames = games.filter(g => g.fantasyPlayers?.length > 0);
+  const playingCount = myGames.length;
 
   return (
     <>
@@ -132,11 +130,8 @@ export default function App() {
         body { background: var(--bg); color: var(--text-primary); font-family: var(--font-sans); }
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
-        .game-card { padding: 16px 18px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.15s; }
+        .game-card { padding: 16px 18px; border-bottom: 1px solid var(--border); }
         .game-card:hover { background: #f0eeeb; }
-        .game-card.selected { background: var(--surface); border-left: 2px solid var(--text-primary); }
-        .watch-btn { display: flex; align-items: center; gap: 10px; padding: 14px 20px; background: var(--text-primary); color: var(--bg); text-decoration: none; font-size: 12px; font-weight: 500; letter-spacing: 0.04em; margin-bottom: 28px; transition: opacity 0.15s; }
-        .watch-btn:hover { opacity: 0.82; }
         .btn-primary { background: var(--text-primary); color: var(--bg); border: none; padding: 10px 28px; font-family: var(--font-sans); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; cursor: pointer; transition: opacity 0.15s; }
         .btn-primary:hover { opacity: 0.82; }
         .btn-outline { background: transparent; border: 1px solid var(--border-strong); color: var(--text-secondary); padding: 5px 14px; cursor: pointer; font-size: 11px; transition: all 0.15s; font-family: var(--font-sans); }
@@ -144,14 +139,10 @@ export default function App() {
         .btn-ghost { background: transparent; border: none; color: var(--text-muted); padding: 5px 10px; cursor: pointer; font-size: 11px; font-family: var(--font-sans); transition: color 0.15s; }
         .btn-ghost:hover { color: var(--text-primary); }
         .player-chip { display: inline-flex; align-items: center; font-size: 10px; font-weight: 500; padding: 3px 9px; border-radius: 100px; border: 1px solid var(--border-strong); color: var(--text-secondary); background: var(--surface); }
-        .gc-player-card { flex: 1; min-width: 130px; padding: 12px 14px; border: 1px solid var(--border); background: var(--surface); transition: border-color 0.15s; }
-        .gc-player-card.active { border-color: var(--text-primary); }
         .roster-textarea { width: 100%; height: 200px; background: var(--bg); border: 1px solid var(--border-strong); color: var(--text-primary); padding: 12px; font-family: var(--font-mono); font-size: 12px; outline: none; resize: none; line-height: 1.8; transition: border-color 0.15s; border-radius: 0; }
         .roster-textarea:focus { border-color: var(--text-primary); }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.25} }
         .live-dot { animation: pulse 1.8s ease-in-out infinite; }
-        @keyframes fadeSlide { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:translateY(0)} }
-        .fadeslide { animation: fadeSlide 0.5s ease; }
         @keyframes feedIn { from{opacity:0;transform:translateY(-8px)} to{opacity:1;transform:translateY(0)} }
         .feed-item { animation: feedIn 0.4s ease; }
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -171,7 +162,7 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {roster.length > 0 && (
               <span style={{ fontSize: 11, color: "var(--text-muted)", marginRight: 4 }}>
-                {gamesLoading ? <span className="spinner" /> : `${playingCount} playing today`}
+                {gamesLoading ? <span className="spinner" /> : `${playingCount} game${playingCount !== 1 ? "s" : ""} with your players`}
               </span>
             )}
             {roster.length > 0 && <button className="btn-ghost" onClick={clearRoster}>Clear</button>}
@@ -208,18 +199,18 @@ export default function App() {
         {roster.length > 0 && (
           <div style={{ display: "flex", height: setupOpen ? "calc(100vh - 340px)" : "calc(100vh - 57px)", overflow: "hidden" }}>
 
-            {/* Panel 1: Game list */}
+            {/* Panel 1: My Games (filtered) */}
             <div style={{ width: 260, borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg)", flexShrink: 0 }}>
               <div style={{ padding: "9px 18px", fontSize: 9, fontWeight: 500, letterSpacing: "0.12em", color: "var(--text-muted)", textTransform: "uppercase", borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
-                Today's Games
+                Your Games
               </div>
               <div style={{ overflowY: "auto", flex: 1 }}>
                 {gamesError && <div style={{ padding: "16px 18px", fontSize: 12, color: "#c0392b" }}>⚠ {gamesError}</div>}
-                {!gamesLoading && !gamesError && games.length === 0 && (
-                  <div style={{ padding: "24px 18px", fontSize: 13, color: "var(--text-muted)", lineHeight: 1.6 }}>No MLB games today.</div>
+                {!gamesLoading && !gamesError && myGames.length === 0 && (
+                  <div style={{ padding: "24px 18px", fontSize: 13, color: "var(--text-muted)", lineHeight: 1.6 }}>None of your players are in today's games.</div>
                 )}
-                {games.map(game => (
-                  <GameCard key={game.id} game={game} selected={selectedGame?.id === game.id} onClick={() => setSelectedGame(game)} />
+                {myGames.map(game => (
+                  <GameCard key={game.id} game={game} />
                 ))}
               </div>
               {/* Roster strip */}
@@ -227,7 +218,7 @@ export default function App() {
                 <div style={{ fontSize: 9, fontWeight: 500, letterSpacing: "0.12em", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 8 }}>Roster</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 150, overflowY: "auto" }}>
                   {roster.map(p => {
-                    const isPlaying = games.some(g => g.fantasyPlayers?.some(fp => fp.name === p));
+                    const isPlaying = myGames.some(g => g.fantasyPlayers?.some(fp => fp.name === p));
                     return (
                       <div key={p} style={{ display: "flex", alignItems: "center", gap: 7, opacity: isPlaying ? 1 : 0.35 }}>
                         <div style={{ width: 5, height: 5, borderRadius: "50%", background: isPlaying ? "var(--text-primary)" : "var(--border-strong)", flexShrink: 0 }} />
@@ -239,11 +230,14 @@ export default function App() {
               </div>
             </div>
 
-            {/* Panel 2: Gamecast */}
-            <div style={{ flex: 1, overflowY: "auto", background: "var(--surface)", borderRight: "1px solid var(--border)" }}>
-              {selectedGame
-                ? <Gamecast game={selectedGame} live={live} />
-                : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-muted)", fontSize: 13 }}>Select a game</div>
+            {/* Panel 2: All Games Board */}
+            <div style={{ flex: 1, overflowY: "auto", background: "var(--bg)", borderRight: "1px solid var(--border)" }}>
+              <div style={{ padding: "9px 18px", fontSize: 9, fontWeight: 500, letterSpacing: "0.12em", color: "var(--text-muted)", textTransform: "uppercase", borderBottom: "1px solid var(--border)", background: "var(--surface)", position: "sticky", top: 0, zIndex: 1 }}>
+                All Games Today
+              </div>
+              {gamesLoading
+                ? <div style={{ padding: "24px 18px" }}><span className="spinner" /></div>
+                : <AllGamesBoard games={games} liveData={liveData} />
               }
             </div>
 
@@ -290,10 +284,10 @@ function FeedItem({ item }) {
   );
 }
 
-function GameCard({ game, selected, onClick }) {
+function GameCard({ game }) {
   const isLive = game.status === "Live";
   return (
-    <div className={`game-card${selected ? " selected" : ""}`} onClick={onClick}>
+    <div className="game-card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         {isLive ? (
           <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -334,125 +328,75 @@ function GameCard({ game, selected, onClick }) {
   );
 }
 
-function Gamecast({ game, live }) {
+function AllGamesBoard({ games, liveData }) {
+  if (!games.length) {
+    return <div style={{ padding: "24px 18px", fontSize: 13, color: "var(--text-muted)" }}>No games today.</div>;
+  }
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 1 }}>
+      {games.map(game => (
+        <ScoreCard key={game.id} game={game} live={liveData[game.id]} />
+      ))}
+    </div>
+  );
+}
+
+function ScoreCard({ game, live }) {
   const isLive = game.status === "Live";
-  const batter = live?.currentBatter;
-  const pitcher = live?.currentPitcher;
-  const lastPlay = live?.lastPlay;
-  const count = live?.count;
-  const bases = live?.bases;
-
+  const isFinal = game.status === "Final";
   return (
-    <div style={{ padding: 28, maxWidth: 620 }}>
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontSize: 9, fontWeight: 500, letterSpacing: "0.12em", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 12 }}>
-          {isLive ? `Live · ${game.inning}` : `Today · ${game.time}`}
-        </div>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
-          {[game.awayTeam, null, game.homeTeam].map((team, i) =>
-            team === null
-              ? <div key="at" style={{ fontSize: 14, color: "var(--text-muted)", paddingBottom: isLive ? 10 : 4 }}>@</div>
-              : (
-                <div key={team.abbr} style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: 34, fontWeight: 700, letterSpacing: "-0.03em", lineHeight: 1 }}>{team.abbr}</div>
-                  <div style={{ fontSize: 9, color: "var(--text-muted)", marginTop: 3 }}>{team.name}</div>
-                  {team.score !== null && team.score !== undefined && (
-                    <div style={{ fontSize: 46, fontWeight: 200, letterSpacing: "-0.04em", lineHeight: 1.1, marginTop: 4 }}>{team.score}</div>
-                  )}
-                </div>
-              )
-          )}
-        </div>
+    <div style={{ background: "var(--surface)", padding: "18px 20px", borderBottom: "1px solid var(--border)", borderRight: "1px solid var(--border)" }}>
+      {/* Status + broadcast */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        {isLive ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <div className="live-dot" style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--text-primary)", flexShrink: 0 }} />
+            <span style={{ fontSize: 10, fontWeight: 600 }}>Live · {game.inning}</span>
+          </div>
+        ) : (
+          <span style={{ fontSize: 10, color: isFinal ? "var(--text-secondary)" : "var(--text-muted)", fontWeight: isFinal ? 500 : 400 }}>
+            {isFinal ? "Final" : game.time}
+          </span>
+        )}
+        <a href={game.broadcast?.url || "#"} target="_blank" rel="noreferrer"
+          style={{ fontSize: 9, fontWeight: 500, padding: "2px 8px", borderRadius: 100, background: game.broadcast?.color || "#e0dedd", color: "var(--text-primary)", textDecoration: "none", letterSpacing: "0.04em" }}>
+          {game.broadcast?.name}
+        </a>
       </div>
-
-      <a href={game.broadcast?.url || "#"} target="_blank" rel="noreferrer" className="watch-btn">
-        Watch on {game.broadcast?.name}
-        <span style={{ marginLeft: "auto", opacity: 0.45 }}>↗</span>
-      </a>
-
+      {/* Teams + scores */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        {[game.awayTeam, null, game.homeTeam].map((team, i) =>
+          team === null
+            ? <div key="at" style={{ fontSize: 11, color: "var(--text-muted)" }}>@</div>
+            : (
+              <div key={team.abbr} style={{ flex: 1, textAlign: "center" }}>
+                <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-0.02em" }}>{team.abbr}</div>
+                <div style={{ fontSize: 8, color: "var(--text-muted)", marginTop: 1 }}>{team.name}</div>
+                {team.score !== null && team.score !== undefined && (
+                  <div style={{ fontSize: 30, fontWeight: 200, letterSpacing: "-0.03em", lineHeight: 1.1, marginTop: 2 }}>{team.score}</div>
+                )}
+              </div>
+            )
+        )}
+      </div>
+      {/* Player chips */}
       {(game.fantasyPlayers || []).length > 0 && (
-        <Section title="Your Players">
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {(game.fantasyPlayers || []).map(fp => {
-              const isActive = isLive && (fp.name === batter || fp.name === pitcher);
-              return (
-                <div key={fp.name} className={`gc-player-card${isActive ? " active" : ""}`}>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 5, marginBottom: 3 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em" }}>{fp.name}</span>
-                    {fp.position && <span style={{ fontSize: 9, fontWeight: 500, color: "var(--text-muted)", letterSpacing: "0.06em" }}>{fp.position}</span>}
-                  </div>
-                  <div style={{ fontSize: 9, fontWeight: 500, color: isActive ? "var(--text-primary)" : "var(--text-muted)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
-                    {isLive && fp.name === batter ? "At bat" : isLive && fp.name === pitcher ? "Pitching" : isLive ? "On field" : "Starting"}
-                  </div>
-                  {isActive && <div style={{ marginTop: 7, height: 2, background: "var(--text-primary)", borderRadius: 1 }} />}
-                </div>
-              );
-            })}
-          </div>
-        </Section>
+        <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginBottom: isLive && live?.lastPlay ? 10 : 0 }}>
+          {(game.fantasyPlayers || []).map(fp => (
+            <span key={fp.name} className="player-chip">
+              {fp.position && <span style={{ opacity: 0.55, marginRight: 3 }}>{fp.position}</span>}
+              {fp.name.split(" ").slice(-1)[0]}
+            </span>
+          ))}
+        </div>
       )}
-
-      {isLive && count && (
-        <Section title="At Bat">
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em", marginBottom: 2 }}>{batter || "—"}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>vs. {pitcher || "—"}</div>
-            </div>
-            <div style={{ display: "flex", gap: 18 }}>
-              {[["B", count.balls, 4, "#b8d4f0"], ["S", count.strikes, 3, "#f0d4b8"], ["O", count.outs, 3, "#1a1917"]].map(([label, val, max, col]) => (
-                <div key={label} style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: 9, fontWeight: 500, color: "var(--text-muted)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 5 }}>{label}</div>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    {Array.from({ length: max }).map((_, i) => (
-                      <div key={i} style={{ width: 10, height: 10, borderRadius: "50%", background: i < val ? col : "var(--border)", border: i < val ? "none" : "1px solid var(--border-strong)", transition: "background 0.3s" }} />
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </Section>
-      )}
-
-      {lastPlay && (
-        <Section title="Last Play">
-          <p key={lastPlay} className="fadeslide" style={{ fontSize: 14, lineHeight: 1.7 }}>{lastPlay}</p>
-        </Section>
-      )}
-
-      {isLive && bases && (
-        <Section title="On Base">
-          <Diamond bases={bases} />
-        </Section>
+      {/* Last play for live games */}
+      {isLive && live?.lastPlay && (
+        <div style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.5, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
+          {live.lastPlay}
+        </div>
       )}
     </div>
   );
 }
 
-function Diamond({ bases }) {
-  const fill = (on) => on ? "#b8d4f0" : "white";
-  const stroke = "#d0cdc8";
-  return (
-    <svg width="90" height="80" viewBox="0 0 110 95">
-      <polygon points="55,8 95,48 55,88 15,48" fill="none" stroke={stroke} strokeWidth="1.5" />
-      <line x1="55" y1="88" x2="55" y2="8" stroke="#e8e6e2" strokeWidth="1" />
-      <line x1="15" y1="48" x2="95" y2="48" stroke="#e8e6e2" strokeWidth="1" />
-      <rect x="49" y="2" width="12" height="12" rx="2" fill={fill(bases.second)} stroke={stroke} strokeWidth="1" transform="rotate(45 55 8)" />
-      <rect x="89" y="42" width="12" height="12" rx="2" fill={fill(bases.first)} stroke={stroke} strokeWidth="1" transform="rotate(45 95 48)" />
-      <rect x="9" y="42" width="12" height="12" rx="2" fill={fill(bases.third)} stroke={stroke} strokeWidth="1" transform="rotate(45 15 48)" />
-      <polygon points="55,90 50,86 52,80 58,80 60,86" fill="#1a1917" />
-    </svg>
-  );
-}
-
-function Section({ title, children }) {
-  return (
-    <div style={{ marginBottom: 24 }}>
-      <div style={{ fontSize: 9, fontWeight: 500, letterSpacing: "0.12em", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 12, paddingBottom: 7, borderBottom: "1px solid var(--border)" }}>
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}

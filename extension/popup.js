@@ -94,44 +94,29 @@ syncBtn.addEventListener("click", async () => {
   }
 });
 
-// ── Fetch roster by running in the ESPN page's main JS world ─────────────────
+// ── Fetch roster via content script on fantasy.espn.com ──────────────────────
+// Content scripts bypass ESPN's service worker (which intercepts MAIN world fetches)
 async function fetchESPNRoster(leagueId) {
-  // Must be fantasy.espn.com specifically so fetch is same-origin with cookies
   const espnTabs = await chrome.tabs.query({ url: "*://fantasy.espn.com/*" });
   if (!espnTabs.length) {
     throw new Error("No ESPN Fantasy tab found — open fantasy.espn.com in a tab first, then try again.");
   }
 
-  const year = new Date().getFullYear();
+  // Inject content script on demand in case the tab predates the extension load
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: espnTabs[0].id },
+      files: ["content.js"],
+    });
+  } catch { /* already injected */ }
 
-  const results = await chrome.scripting.executeScript({
-    target: { tabId: espnTabs[0].id },
-    world: "MAIN", // run as page JS so fetch carries the page's cookies
-    func: async (leagueId, year) => {
-      for (const y of [year, year - 1]) {
-        try {
-          const url = `https://fantasy.espn.com/apis/v3/games/flb/seasons/${y}/segments/0/leagues/${leagueId}?view=mRoster`;
-          const resp = await fetch(url);
-          if (resp.status === 500 && y === year) continue;
-          if (resp.status === 401) return { error: "ESPN session expired — log out and back in." };
-          if (resp.status === 404) return { error: "League not found — check your league ID." };
-          if (!resp.ok) return { error: `ESPN returned ${resp.status}` };
-          let data;
-          try { data = await resp.json(); }
-          catch { return { error: `ESPN returned non-JSON (content-type: ${resp.headers.get("content-type")})` }; }
-          return { data };
-        } catch (e) {
-          if (y === year) continue;
-          return { error: e.message };
-        }
-      }
-      return { error: "Could not load roster from ESPN." };
-    },
-    args: [leagueId, year],
+  const result = await chrome.tabs.sendMessage(espnTabs[0].id, {
+    type: "FETCH_ROSTER",
+    leagueId,
+    year: new Date().getFullYear(),
   });
 
-  const result = results?.[0]?.result;
-  if (!result) throw new Error("Could not get a result from ESPN tab — make sure the page is fully loaded.");
+  if (!result) throw new Error("No response from ESPN tab — reload the ESPN Fantasy page and try again.");
   if (result.error) throw new Error(result.error);
   return parseRoster(result.data);
 }

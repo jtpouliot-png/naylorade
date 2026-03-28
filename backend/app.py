@@ -376,10 +376,10 @@ def fetch_player_news(player_name):
     name_lower = player_name.lower()
     results = []
 
-    # 1. FanGraphs — filter shared feed for player name mentions
+    # 1. FanGraphs — show any mention of the player in the last 3 days
     for item in _get_fangraphs_items():
         text = (item["title"] + " " + item.get("_desc", "")).lower()
-        if name_lower in text and _is_analytical(item["title"]):
+        if name_lower in text:
             results.append({k: v for k, v in item.items() if k != "_desc"})
             results[-1]["source"] = "FanGraphs"
             if len(results) >= 3:

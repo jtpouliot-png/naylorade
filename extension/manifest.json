@@ -6,10 +6,8 @@
   "permissions": ["cookies", "storage", "tabs", "scripting"],
   "host_permissions": [
     "*://*.espn.com/*",
-    "*://*.railway.app/*",
-    "https://naylorade.vercel.app/*",
-    "http://localhost:5000/*",
-    "http://localhost:5173/*"
+    "*://*/*",
+    "http://*/*"
   ],
   "action": {
     "default_popup": "popup.html",

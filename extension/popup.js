@@ -96,6 +96,15 @@ syncBtn.addEventListener("click", async () => {
 
   setSyncing(true);
 
+  // First verify the backend is reachable
+  try {
+    const health = await fetch(`${apiUrl}/api/health`);
+    if (!health.ok) throw new Error(`Backend returned ${health.status}`);
+  } catch (e) {
+    setSyncing(false);
+    return showError(`Cannot reach backend at:\n${apiUrl}\n\nCheck Settings — paste your Railway URL.`);
+  }
+
   try {
     const res = await fetch(`${apiUrl}/api/roster`, {
       method: "POST",

@@ -97,41 +97,26 @@ syncBtn.addEventListener("click", async () => {
   }
 });
 
-// ── Fetch roster via backend (avoids browser Sec-Fetch-* header restrictions) ─
+// ── Fetch roster from intercepted ESPN page response ─────────────────────────
 async function fetchESPNRoster(leagueId) {
-  const appUrl   = normalizeUrl(appUrlInput.value.trim() || DEFAULT_APP_URL);
-  const apiUrl   = await getApiUrl();
-
-  // Read ESPN cookies to pass to backend
-  const [s2Cookie, swidCookie] = await Promise.all([
-    chrome.cookies.get({ url: "https://fantasy.espn.com", name: "espn_s2" }),
-    chrome.cookies.get({ url: "https://fantasy.espn.com", name: "SWID" }),
-  ]);
-
-  if (!s2Cookie || !swidCookie) throw new Error("ESPN cookies not found — make sure you are logged into ESPN Fantasy.");
-
-  const res = await fetch(`${apiUrl}/api/roster`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      leagueId,
-      espnS2: s2Cookie.value,
-      swid: swidCookie.value,
-    }),
-  });
-
-  const data = await res.json();
-  if (!res.ok) {
-    const detail = data.detail ? `\nESPN said: ${data.detail}` : "";
-    throw new Error(`${data.error || `HTTP ${res.status}`}${detail}`);
+  const espnTabs = await chrome.tabs.query({ url: "*://fantasy.espn.com/*" });
+  if (!espnTabs.length) {
+    throw new Error("No ESPN Fantasy tab found — open fantasy.espn.com first.");
   }
 
-  return data.players || [];
-}
+  // Inject content script on demand for tabs open before extension load
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: espnTabs[0].id },
+      files: ["content.js"],
+    });
+  } catch { /* already injected */ }
 
-async function getApiUrl() {
-  const saved = await chrome.storage.local.get("apiUrl");
-  return normalizeUrl(saved.apiUrl || DEFAULT_API_URL);
+  const result = await chrome.tabs.sendMessage(espnTabs[0].id, { type: "GET_ROSTER" });
+
+  if (!result) throw new Error("No response from ESPN tab — reload it and try again.");
+  if (result.error) throw new Error(result.error);
+  return parseRoster(result.data);
 }
 
 function parseRoster(data) {

@@ -1,35 +1,22 @@
-// Runs inside ESPN Fantasy pages — handles roster fetch requests from the popup
-// Guard against double-injection
+// Isolated world — bridges interceptor (MAIN) → extension runtime
 if (window.__nayloradeLoaded) throw new Error("already loaded");
 window.__nayloradeLoaded = true;
 
+// Receive roster data posted by interceptor.js
+window.addEventListener("message", (e) => {
+  if (e.source !== window || e.data?.__naylorade !== "roster") return;
+  chrome.storage.local.set({ cachedRoster: e.data.data });
+});
+
+// Respond to popup asking for cached roster
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type !== "FETCH_ROSTER") return;
-
-  const { leagueId, year } = message;
-
-  (async () => {
-    for (const y of [year, year - 1]) {
-      const url = `https://fantasy.espn.com/apis/v3/games/flb/seasons/${y}/segments/0/leagues/${leagueId}?view=mRoster`;
-      try {
-        const resp = await fetch(url, { credentials: "same-origin" });
-        if (resp.status === 500 && y === year) continue;
-        if (resp.status === 401) return sendResponse({ error: "ESPN session expired — log out and back in." });
-        if (resp.status === 404) return sendResponse({ error: "League not found — check your league ID." });
-        if (!resp.ok) return sendResponse({ error: `ESPN returned ${resp.status}` });
-
-        let data;
-        try { data = await resp.json(); }
-        catch { return sendResponse({ error: `ESPN returned non-JSON (${resp.headers.get("content-type")})` }); }
-
-        return sendResponse({ data });
-      } catch (e) {
-        if (y === year) continue;
-        return sendResponse({ error: e.message });
-      }
+  if (message.type !== "GET_ROSTER") return;
+  chrome.storage.local.get("cachedRoster").then(saved => {
+    if (saved.cachedRoster) {
+      sendResponse({ data: saved.cachedRoster });
+    } else {
+      sendResponse({ error: "No roster cached yet — reload your ESPN Fantasy page, then try Sync." });
     }
-    sendResponse({ error: "Could not load roster from ESPN for this year or last." });
-  })();
-
-  return true; // keep message channel open for async response
+  });
+  return true;
 });

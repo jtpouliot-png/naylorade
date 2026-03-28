@@ -15,9 +15,15 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.espn.com/*"],
+      "matches": ["*://fantasy.espn.com/*"],
+      "js": ["interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["*://fantasy.espn.com/*"],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ]
 }

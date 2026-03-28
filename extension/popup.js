@@ -123,7 +123,7 @@ async function fetchESPNRoster(leagueId) {
       }
 
       const pp = nd?.props?.pageProps;
-      return { source: "__NEXT_DATA__", structure: summarize(pp) };
+      return { source: "__NEXT_DATA__", structure: Object.keys(pp || {}) };
     },
   });
 

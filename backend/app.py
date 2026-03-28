@@ -27,11 +27,10 @@ BROADCAST_META = {
 }
 
 def get_broadcast_meta(name, game_pk=None):
-    mlbtv_url = f"https://www.mlb.com/live-stream-games/{game_pk}" if game_pk else "https://www.mlb.com"
     for key in BROADCAST_META:
         if key.lower() in name.lower():
-            return {"name": name, "mlbtvUrl": mlbtv_url, **BROADCAST_META[key]}
-    return {"name": name, "url": mlbtv_url, "mlbtvUrl": mlbtv_url, **{k: v for k, v in BROADCAST_META["default"].items() if k != "url"}}
+            return {"name": name, **BROADCAST_META[key]}
+    return {"name": name, "url": "https://www.mlb.com", "color": BROADCAST_META["default"]["color"]}
 
 
 # ── ESPN roster ───────────────────────────────────────────────────────────────
@@ -180,7 +179,7 @@ def parse_game(game):
             "abbr": away_team.get("abbreviation", ""),
             "score": away_score,
         },
-        "broadcast": get_broadcast_meta(broadcast_name, game.get("gamePk")),
+        "broadcast": get_broadcast_meta(broadcast_name),
         "probablePitchers": {
             "home": home_pitcher,
             "away": away_pitcher,

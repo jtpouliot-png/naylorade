@@ -85,8 +85,8 @@ leagueIdInput.addEventListener("input", updateSyncBtn);
 syncBtn.addEventListener("click", async () => {
   clearError();
   const leagueId = leagueIdInput.value.trim();
-  const apiUrl   = (apiUrlInput.value.trim() || DEFAULT_API_URL).replace(/\/$/, "");
-  const appUrl   = (appUrlInput.value.trim() || DEFAULT_APP_URL).replace(/\/$/, "");
+  const apiUrl   = normalizeUrl(apiUrlInput.value.trim() || DEFAULT_API_URL);
+  const appUrl   = normalizeUrl(appUrlInput.value.trim() || DEFAULT_APP_URL);
 
   if (!leagueId) return showError("Enter your ESPN league ID.");
   if (!espnS2 || !swid) return showError("ESPN cookies not found. Log into ESPN Fantasy first.");
@@ -221,6 +221,13 @@ function setSyncing(on) {
   syncBtn.innerHTML = on
     ? '<span class="spinner"></span>Syncing...'
     : "Sync Roster";
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function normalizeUrl(url) {
+  url = url.trim().replace(/\/$/, "");
+  if (url && !/^https?:\/\//i.test(url)) url = "https://" + url;
+  return url;
 }
 
 // ── Start ─────────────────────────────────────────────────────────────────────

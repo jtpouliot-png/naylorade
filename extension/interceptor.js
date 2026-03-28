@@ -18,6 +18,10 @@
   const _fetch = window.fetch;
   window.fetch = async function (input, init) {
     const url = (typeof input === "string" ? input : input?.url) || "";
+    // Debug: log every fetch URL so we can see what ESPN actually calls
+    if (url.includes("espn.com")) {
+      window.postMessage({ __naylorade: "debug_url", url }, "*");
+    }
     const response = await _fetch.apply(this, arguments);
     if (ESPN_API_RE.test(url)) {
       response.clone().json().then(data => tryCache(url, data)).catch(() => {});

@@ -37,8 +37,8 @@ async function init() {
 async function checkESPNCookies() {
   try {
     const [s2Cookie, swidCookie] = await Promise.all([
-      chrome.cookies.get({ url: "https://fantasy.espn.com", name: "espn_s2" }),
-      chrome.cookies.get({ url: "https://fantasy.espn.com", name: "SWID" }),
+      chrome.cookies.get({ url: "https://www.espn.com", name: "espn_s2" }),
+      chrome.cookies.get({ url: "https://www.espn.com", name: "SWID" }),
     ]);
 
     swid = swidCookie?.value || null;
@@ -46,7 +46,7 @@ async function checkESPNCookies() {
     if (s2Cookie && swidCookie) {
       espnStatus.innerHTML = `<div class="dot green"></div><span>Logged in — cookies found</span>`;
     } else {
-      espnStatus.innerHTML = `<div class="dot red"></div><span>Not logged in — <a href="https://fantasy.espn.com/baseball" target="_blank" style="color:#1a1917">open ESPN Fantasy</a> first</span>`;
+      espnStatus.innerHTML = `<div class="dot red"></div><span>Not logged in — <a href="https://www.espn.com/fantasy/baseball" target="_blank" style="color:#1a1917">open ESPN Fantasy</a> first</span>`;
     }
   } catch {
     espnStatus.innerHTML = `<div class="dot red"></div><span>Could not read cookies</span>`;
@@ -99,9 +99,12 @@ syncBtn.addEventListener("click", async () => {
 
 // ── Fetch roster from intercepted ESPN page response ─────────────────────────
 async function fetchESPNRoster(leagueId) {
-  const espnTabs = await chrome.tabs.query({ url: "*://fantasy.espn.com/*" });
+  const espnTabs = [
+    ...await chrome.tabs.query({ url: "*://fantasy.espn.com/*" }),
+    ...await chrome.tabs.query({ url: "*://www.espn.com/fantasy/*" }),
+  ];
   if (!espnTabs.length) {
-    throw new Error("No ESPN Fantasy tab found — open fantasy.espn.com first.");
+    throw new Error("No ESPN Fantasy tab found — open espn.com/fantasy first.");
   }
 
   // Inject content script on demand for tabs open before extension load

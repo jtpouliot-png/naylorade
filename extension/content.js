@@ -2,6 +2,12 @@
 if (window.__nayloradeLoaded) throw new Error("already loaded");
 window.__nayloradeLoaded = true;
 
+// Inject interceptor.js into the page's MAIN world via script tag
+const s = document.createElement("script");
+s.src = chrome.runtime.getURL("interceptor.js");
+s.onload = () => s.remove();
+(document.head || document.documentElement).appendChild(s);
+
 // Receive messages posted by interceptor.js
 window.addEventListener("message", (e) => {
   if (e.source !== window || !e.data?.__naylorade) return;

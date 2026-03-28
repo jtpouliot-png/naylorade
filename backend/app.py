@@ -42,13 +42,20 @@ def fetch_espn_roster(league_id, espn_s2, swid, year=None):
     url = f"https://fantasy.espn.com/apis/v3/games/flb/seasons/{year}/segments/0/leagues/{league_id}"
     params = {"view": "mRoster"}
     cookies = {"espn_s2": espn_s2, "SWID": swid}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://fantasy.espn.com/baseball/",
+        "Origin": "https://fantasy.espn.com",
+    }
 
-    resp = requests.get(url, params=params, cookies=cookies, timeout=10)
+    resp = requests.get(url, params=params, cookies=cookies, headers=headers, timeout=10)
 
     # If current year fails, try previous year (league may not have rolled over yet)
-    if resp.status_code == 500 and year == date.today().year:
+    if resp.status_code in (500, 404) and year == date.today().year:
         prev_url = f"https://fantasy.espn.com/apis/v3/games/flb/seasons/{year - 1}/segments/0/leagues/{league_id}"
-        resp = requests.get(prev_url, params=params, cookies=cookies, timeout=10)
+        resp = requests.get(prev_url, params=params, cookies=cookies, headers=headers, timeout=10)
 
     resp.raise_for_status()
     data = resp.json()

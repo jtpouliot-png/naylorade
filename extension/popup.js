@@ -1,4 +1,5 @@
 const DEFAULT_APP_URL = "https://naylorade.vercel.app";
+const DEFAULT_API_URL = "";
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const espnStatus     = document.getElementById("espn-status");
@@ -9,6 +10,7 @@ const errorBox       = document.getElementById("error-box");
 const playerListWrap = document.getElementById("player-list-wrap");
 const playerList     = document.getElementById("player-list");
 const successMsg     = document.getElementById("success-msg");
+const apiUrlInput    = document.getElementById("api-url");
 const appUrlInput    = document.getElementById("app-url");
 const saveSettingsBtn= document.getElementById("save-settings-btn");
 
@@ -16,7 +18,8 @@ let swid = null;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
-  const saved = await chrome.storage.local.get(["appUrl", "leagueId", "lastRoster"]);
+  const saved = await chrome.storage.local.get(["apiUrl", "appUrl", "leagueId", "lastRoster"]);
+  apiUrlInput.value = saved.apiUrl || "";
   appUrlInput.value = saved.appUrl || DEFAULT_APP_URL;
   if (saved.leagueId) leagueIdInput.value = saved.leagueId;
 
@@ -94,31 +97,41 @@ syncBtn.addEventListener("click", async () => {
   }
 });
 
-// ── Fetch roster via content script on fantasy.espn.com ──────────────────────
-// Content scripts bypass ESPN's service worker (which intercepts MAIN world fetches)
+// ── Fetch roster via backend (avoids browser Sec-Fetch-* header restrictions) ─
 async function fetchESPNRoster(leagueId) {
-  const espnTabs = await chrome.tabs.query({ url: "*://fantasy.espn.com/*" });
-  if (!espnTabs.length) {
-    throw new Error("No ESPN Fantasy tab found — open fantasy.espn.com in a tab first, then try again.");
-  }
+  const appUrl   = normalizeUrl(appUrlInput.value.trim() || DEFAULT_APP_URL);
+  const apiUrl   = await getApiUrl();
 
-  // Inject content script on demand in case the tab predates the extension load
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId: espnTabs[0].id },
-      files: ["content.js"],
-    });
-  } catch { /* already injected */ }
+  // Read ESPN cookies to pass to backend
+  const [s2Cookie, swidCookie] = await Promise.all([
+    chrome.cookies.get({ url: "https://fantasy.espn.com", name: "espn_s2" }),
+    chrome.cookies.get({ url: "https://fantasy.espn.com", name: "SWID" }),
+  ]);
 
-  const result = await chrome.tabs.sendMessage(espnTabs[0].id, {
-    type: "FETCH_ROSTER",
-    leagueId,
-    year: new Date().getFullYear(),
+  if (!s2Cookie || !swidCookie) throw new Error("ESPN cookies not found — make sure you are logged into ESPN Fantasy.");
+
+  const res = await fetch(`${apiUrl}/api/roster`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      leagueId,
+      espnS2: s2Cookie.value,
+      swid: swidCookie.value,
+    }),
   });
 
-  if (!result) throw new Error("No response from ESPN tab — reload the ESPN Fantasy page and try again.");
-  if (result.error) throw new Error(result.error);
-  return parseRoster(result.data);
+  const data = await res.json();
+  if (!res.ok) {
+    const detail = data.detail ? `\nESPN said: ${data.detail}` : "";
+    throw new Error(`${data.error || `HTTP ${res.status}`}${detail}`);
+  }
+
+  return data.players || [];
+}
+
+async function getApiUrl() {
+  const saved = await chrome.storage.local.get("apiUrl");
+  return normalizeUrl(saved.apiUrl || DEFAULT_API_URL);
 }
 
 function parseRoster(data) {
@@ -195,7 +208,10 @@ openBtn.addEventListener("click", async () => {
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 saveSettingsBtn.addEventListener("click", async () => {
-  await chrome.storage.local.set({ appUrl: appUrlInput.value.trim() });
+  await chrome.storage.local.set({
+    apiUrl: apiUrlInput.value.trim(),
+    appUrl: appUrlInput.value.trim(),
+  });
   saveSettingsBtn.textContent = "Saved ✓";
   setTimeout(() => saveSettingsBtn.textContent = "Save Settings", 1500);
 });

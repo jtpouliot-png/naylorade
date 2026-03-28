@@ -287,15 +287,30 @@ def get_players_in_game(game_id, roster_names):
 _news_cache = {}  # {player_name: {"ts": float, "items": list}}
 NEWS_CACHE_TTL = 20 * 60  # 20 minutes
 
+FANGRAPHS_FEEDS = [
+    "https://www.fangraphs.com/feed/",
+    "https://www.fangraphs.com/fantasy/feed/",
+]
 
-def fetch_player_news(player_name):
-    now = time.time()
-    cached = _news_cache.get(player_name)
-    if cached and now - cached["ts"] < NEWS_CACHE_TTL:
-        return cached["items"]
+# Noise keywords — skip articles whose titles are purely game recaps
+RECAP_KEYWORDS = [
+    " goes ", " for ", "batting", "lineup", "roster move", "placed on",
+    "activated", "recalled", "optioned", "scratched", "box score",
+]
 
-    query = requests.utils.quote(f"{player_name} MLB baseball")
-    url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+# Words that signal analytical content — prefer these
+ANALYSIS_KEYWORDS = [
+    "analysis", "breakdown", "projection", "prospect", "scouting",
+    "fantasy", "outlook", "preview", "profile", "evaluation", "metric",
+    "statcast", "spin rate", "exit velo", "trade value", "deep dive",
+]
+
+_fg_cache = {"ts": 0, "items": []}  # shared FanGraphs feed cache
+FG_CACHE_TTL = 15 * 60
+
+
+def _fetch_rss_items(url):
+    """Fetch and parse an RSS feed, return list of raw dicts."""
     try:
         resp = requests.get(url, timeout=8, headers={
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
@@ -303,7 +318,7 @@ def fetch_player_news(player_name):
         resp.raise_for_status()
         root = ET.fromstring(resp.content)
     except Exception as e:
-        print(f"News fetch error for {player_name}: {e}", flush=True)
+        print(f"RSS fetch error {url}: {e}", flush=True)
         return []
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=3)
@@ -314,6 +329,7 @@ def fetch_player_news(player_name):
         pub_str = item.findtext("pubDate", "")
         source_el = item.find("source")
         source = source_el.text.strip() if source_el is not None else ""
+        desc = item.findtext("description", "")
 
         try:
             pub_dt = parsedate_to_datetime(pub_str)
@@ -324,13 +340,69 @@ def fetch_player_news(player_name):
             published_iso = pub_str
 
         if title and link:
-            items.append({"title": title, "url": link, "source": source, "published": published_iso})
-
-        if len(items) >= 3:
-            break
-
-    _news_cache[player_name] = {"ts": now, "items": items}
+            items.append({"title": title, "url": link, "source": source,
+                          "published": published_iso, "_desc": desc})
     return items
+
+
+def _get_fangraphs_items():
+    """Return cached FanGraphs feed items (both main + fantasy)."""
+    now = time.time()
+    if now - _fg_cache["ts"] < FG_CACHE_TTL:
+        return _fg_cache["items"]
+    all_items = []
+    for feed_url in FANGRAPHS_FEEDS:
+        all_items.extend(_fetch_rss_items(feed_url))
+    _fg_cache["ts"] = now
+    _fg_cache["items"] = all_items
+    return all_items
+
+
+def _is_analytical(title):
+    tl = title.lower()
+    if any(k in tl for k in ANALYSIS_KEYWORDS):
+        return True
+    if any(k in tl for k in RECAP_KEYWORDS):
+        return False
+    return True  # neutral — include
+
+
+def fetch_player_news(player_name):
+    now = time.time()
+    cached = _news_cache.get(player_name)
+    if cached and now - cached["ts"] < NEWS_CACHE_TTL:
+        return cached["items"]
+
+    name_lower = player_name.lower()
+    results = []
+
+    # 1. FanGraphs — filter shared feed for player name mentions
+    for item in _get_fangraphs_items():
+        text = (item["title"] + " " + item.get("_desc", "")).lower()
+        if name_lower in text and _is_analytical(item["title"]):
+            results.append({k: v for k, v in item.items() if k != "_desc"})
+            results[-1]["source"] = "FanGraphs"
+            if len(results) >= 3:
+                break
+
+    # 2. Google News — restricted to analytical outlets, exclude recaps
+    if len(results) < 3:
+        needed = 3 - len(results)
+        query = requests.utils.quote(
+            f'"{player_name}" (site:fangraphs.com OR site:baseballprospectus.com '
+            f'OR site:theathletic.com OR site:theringer.com OR site:mlb.com/news)'
+        )
+        url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+        seen_titles = {r["title"] for r in results}
+        for item in _fetch_rss_items(url):
+            if item["title"] not in seen_titles and _is_analytical(item["title"]):
+                results.append({k: v for k, v in item.items() if k != "_desc"})
+                seen_titles.add(item["title"])
+                if len(results) >= 3:
+                    break
+
+    _news_cache[player_name] = {"ts": now, "items": results}
+    return results
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────

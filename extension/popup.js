@@ -113,7 +113,10 @@ syncBtn.addEventListener("click", async () => {
     });
 
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (!res.ok) {
+      const detail = data.detail ? `\n\nESPN said: ${data.detail}` : "";
+      throw new Error(`${data.error || `HTTP ${res.status}`}${detail}`);
+    }
 
     const players = data.players || [];
     if (!players.length) throw new Error("No players found. Check your league ID.");

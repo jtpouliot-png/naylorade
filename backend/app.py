@@ -44,6 +44,12 @@ def fetch_espn_roster(league_id, espn_s2, swid, year=None):
     cookies = {"espn_s2": espn_s2, "SWID": swid}
 
     resp = requests.get(url, params=params, cookies=cookies, timeout=10)
+
+    # If current year fails, try previous year (league may not have rolled over yet)
+    if resp.status_code == 500 and year == date.today().year:
+        prev_url = f"https://fantasy.espn.com/apis/v3/games/flb/seasons/{year - 1}/segments/0/leagues/{league_id}"
+        resp = requests.get(prev_url, params=params, cookies=cookies, timeout=10)
+
     resp.raise_for_status()
     data = resp.json()
 

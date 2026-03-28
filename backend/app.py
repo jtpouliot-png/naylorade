@@ -332,9 +332,11 @@ def get_games():
         probable = [v for v in pp.values() if v]
 
         if game["status"] == "Preview":
+            # Only tag a pitcher if they're the confirmed probable starter for this game
             found = [{"name": p, "position": "SP"} for p in roster if p in probable]
-            if not found:
-                found = get_players_in_game(game_id, roster)
+            # Also check boxscore for rostered batters, but never infer pitchers from it
+            boxscore = get_players_in_game(game_id, roster)
+            found += [p for p in boxscore if p["position"] not in ("P", "SP", "RP")]
         else:
             found = get_players_in_game(game_id, roster)
 

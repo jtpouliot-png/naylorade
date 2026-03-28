@@ -94,29 +94,43 @@ syncBtn.addEventListener("click", async () => {
   }
 });
 
-// ── Fetch roster directly from ESPN (browser IP, existing session) ────────────
+// ── Fetch roster by executing inside an ESPN tab (bypasses SameSite cookie restrictions) ──
 async function fetchESPNRoster(leagueId) {
-  const year = new Date().getFullYear();
-
-  for (const y of [year, year - 1]) {
-    const url = `https://fantasy.espn.com/apis/v3/games/flb/seasons/${y}/segments/0/leagues/${leagueId}?view=mRoster`;
-    const resp = await fetch(url, { credentials: "include" });
-
-    if (resp.status === 500 && y === year) continue; // try previous year
-    if (resp.status === 401) throw new Error("ESPN credentials expired — log out and back into ESPN Fantasy.");
-    if (resp.status === 404) throw new Error("League not found — double-check your league ID.");
-    if (!resp.ok) throw new Error(`ESPN returned ${resp.status}`);
-
-    const contentType = resp.headers.get("content-type") || "";
-    if (!contentType.includes("application/json")) {
-      throw new Error("ESPN returned an HTML page instead of data — make sure you are logged into ESPN Fantasy and try again.");
-    }
-
-    const data = await resp.json();
-    return parseRoster(data);
+  const espnTabs = await chrome.tabs.query({ url: "*://*.espn.com/*" });
+  if (!espnTabs.length) {
+    throw new Error("No ESPN tab found. Open ESPN Fantasy Baseball in a tab first, then try again.");
   }
 
-  throw new Error("Could not load roster from ESPN for 2025 or 2026.");
+  const year = new Date().getFullYear();
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: espnTabs[0].id },
+    func: async (leagueId, year) => {
+      for (const y of [year, year - 1]) {
+        const url = `https://fantasy.espn.com/apis/v3/games/flb/seasons/${y}/segments/0/leagues/${leagueId}?view=mRoster`;
+        try {
+          const resp = await fetch(url, { credentials: "include" });
+          if (resp.status === 500 && y === year) continue;
+          if (resp.status === 401) return { error: "ESPN credentials expired — log out and back in." };
+          if (resp.status === 404) return { error: "League not found — check your league ID." };
+          if (!resp.ok) return { error: `ESPN returned ${resp.status}` };
+          const ct = resp.headers.get("content-type") || "";
+          if (!ct.includes("application/json")) return { error: "ESPN returned an unexpected page — are you logged in?" };
+          return { data: await resp.json() };
+        } catch (e) {
+          if (y === year) continue;
+          return { error: e.message };
+        }
+      }
+      return { error: "Could not load roster from ESPN for this year or last." };
+    },
+    args: [leagueId, year],
+  });
+
+  const result = results?.[0]?.result;
+  if (!result) throw new Error("Script injection failed — make sure the ESPN tab is fully loaded.");
+  if (result.error) throw new Error(result.error);
+  return parseRoster(result.data);
 }
 
 function parseRoster(data) {

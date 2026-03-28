@@ -122,8 +122,22 @@ async function fetchESPNRoster(leagueId) {
         return typeof obj === "string" && obj.length > 40 ? obj.slice(0, 40) + "…" : obj;
       }
 
-      const pp = nd?.props?.pageProps;
-      return { source: "__NEXT_DATA__", structure: Object.keys(pp || {}) };
+      // __NEXT_DATA__ has no roster - data is loaded client-side, probe DOM instead
+      const selectors = [
+        'a[href*="/mlb/player/"]',
+        '[class*="PlayerName"]',
+        '[class*="player-name"]',
+        '[class*="playerName"]',
+        '[class*="player_name"]',
+        '[class*="AthleteName"]',
+        '.truncate',
+      ];
+      const results = {};
+      for (const sel of selectors) {
+        const els = [...document.querySelectorAll(sel)];
+        if (els.length) results[sel] = els.slice(0, 5).map(e => e.textContent.trim()).filter(Boolean);
+      }
+      return { source: "dom_probe", results };
     },
   });
 

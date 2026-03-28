@@ -107,7 +107,7 @@ export default function App() {
         if (Notification.permission === "granted") {
           const prev = notifiedAtBat.current[game.id] || {};
           const gameLabel = `${game.awayTeam.abbr} @ ${game.homeTeam.abbr}`;
-          const watchUrl = game.broadcast?.url;
+          const watchUrl = game.broadcast?.mlbtvUrl || game.broadcast?.url;
           const broadcastName = game.broadcast?.name;
 
           if (data.currentBatter && data.currentBatter !== prev.batter && currentRoster.includes(data.currentBatter)) {
@@ -401,7 +401,7 @@ function ScoreCard({ game, live }) {
             {isFinal ? "Final" : game.time}
           </span>
         )}
-        <a href={game.broadcast?.url || "#"} target="_blank" rel="noreferrer"
+        <a href={game.broadcast?.mlbtvUrl || game.broadcast?.url || "#"} target="_blank" rel="noreferrer"
           style={{ fontSize: 9, fontWeight: 500, padding: "2px 8px", borderRadius: 100, background: game.broadcast?.color || "#e0dedd", color: "var(--text-primary)", textDecoration: "none", letterSpacing: "0.04em" }}>
           {game.broadcast?.name}
         </a>

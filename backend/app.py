@@ -413,8 +413,7 @@ def fetch_player_news(player_name):
                 break
 
     # 2. Google News — restricted to analytical outlets, exclude recaps
-    if len(results) < 3:
-        needed = 3 - len(results)
+    if len(results) < 5:
         query = requests.utils.quote(
             f'"{player_name}" (site:fangraphs.com OR site:baseballprospectus.com '
             f'OR site:theathletic.com OR site:theringer.com OR site:mlb.com/news)'
@@ -422,6 +421,8 @@ def fetch_player_news(player_name):
         url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
         seen_titles = {r["title"] for r in results}
         for item in _fetch_rss_items(url):
+            if any(d in item.get("url", "") for d in EXCLUDED_DOMAINS):
+                continue
             if item["title"] not in seen_titles and _is_analytical(item["title"]):
                 results.append({k: v for k, v in item.items() if k != "_desc"})
                 seen_titles.add(item["title"])

@@ -111,18 +111,18 @@ async function fetchESPNRoster(leagueId) {
     target: { tabId: espnTabs[0].id },
     world: "MAIN",
     func: () => {
-      // 1. Try ESPN window globals
-      for (const g of ["__espnfec__", "espnfec", "espnBootstrap", "__ESPN__", "__NEXT_DATA__"]) {
-        if (window[g]) return { source: g, data: window[g] };
+      // Dig into __NEXT_DATA__ and return its structure for inspection
+      const nd = window.__NEXT_DATA__;
+      if (!nd) return { source: "none" };
+
+      function summarize(obj, depth = 0) {
+        if (depth > 4 || obj === null || obj === undefined) return typeof obj;
+        if (Array.isArray(obj)) return `Array(${obj.length}) of ${summarize(obj[0], depth + 1)}`;
+        if (typeof obj === "object") return Object.fromEntries(Object.keys(obj).slice(0, 15).map(k => [k, summarize(obj[k], depth + 1)]));
+        return typeof obj === "string" && obj.length > 40 ? obj.slice(0, 40) + "…" : obj;
       }
-      // 2. Try player profile links (href contains /mlb/player/)
-      const links = [...document.querySelectorAll("a[href*='/mlb/player/']")];
-      if (links.length) {
-        return { source: "links", players: links.map(l => l.textContent.trim()).filter(Boolean) };
-      }
-      // 3. Return debug info
-      const keys = Object.keys(window).filter(k => k.length < 40 && !/^[0-9]/.test(k));
-      return { source: "none", windowKeys: keys.slice(0, 60) };
+
+      return { source: "__NEXT_DATA__", structure: summarize(nd) };
     },
   });
 

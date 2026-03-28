@@ -23,7 +23,7 @@ BROADCAST_META = {
     "FS1":         {"color": "#f0e8b8", "url": "https://fox.com/channel/fs1"},
     "TBS":         {"color": "#d4f0b8", "url": "https://watch.tbs.com"},
     "MLB Network": {"color": "#f0b8b8", "url": "https://mlb.com/network"},
-    "default":     {"color": "#e0dedd", "url": None},  # filled in per-game with live-stream-games link
+    "default":     {"color": "#e0dedd", "url": "https://www.mlb.com"},
 }
 
 def get_broadcast_meta(name):

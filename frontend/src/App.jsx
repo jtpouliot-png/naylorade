@@ -30,7 +30,9 @@ export default function App() {
   const [setupOpen, setSetupOpen] = useState(false);
   const [rosterText, setRosterText] = useState(() => (storage("naylorade_roster") || []).join("\n"));
   const [feed, setFeed] = useState([]); // [{time, player, game, text, id}]
+  const [notifPermission, setNotifPermission] = useState(() => typeof Notification !== "undefined" ? Notification.permission : "denied");
   const seenPlays = useRef(new Set());
+  const notifiedAtBat = useRef({}); // {gameId: {batter, pitcher}} — last state we notified about
 
   const loadGames = useCallback(async (rosterList) => {
     if (!rosterList?.length) return;
@@ -47,12 +49,19 @@ export default function App() {
     }
   }, []);
 
+  async function requestNotifications() {
+    if (typeof Notification === "undefined") return;
+    const result = await Notification.requestPermission();
+    setNotifPermission(result);
+  }
+
   function saveRoster() {
     const players = rosterText.split("\n").map(p => p.trim()).filter(Boolean);
     setRoster(players);
     storage("naylorade_roster", players);
     setSetupOpen(false);
     loadGames(players);
+    if (Notification.permission === "default") requestNotifications();
   }
 
   function clearRoster() {
@@ -92,6 +101,32 @@ export default function App() {
               }, ...prev].slice(0, 100));
             }
           }
+        }
+
+        // Browser notification when a rostered player steps up to bat or starts pitching
+        if (Notification.permission === "granted") {
+          const prev = notifiedAtBat.current[game.id] || {};
+          const gameLabel = `${game.awayTeam.abbr} @ ${game.homeTeam.abbr}`;
+          const broadcastUrl = game.broadcast?.url;
+          const broadcastName = game.broadcast?.name;
+
+          if (data.currentBatter && data.currentBatter !== prev.batter && currentRoster.includes(data.currentBatter)) {
+            const n = new Notification(`${data.currentBatter.split(" ").slice(-1)[0]} up to bat`, {
+              body: `${gameLabel} · Watch on ${broadcastName}`,
+              tag: `bat-${game.id}-${data.currentBatter}`,
+            });
+            if (broadcastUrl) n.onclick = () => { window.open(broadcastUrl, "_blank"); n.close(); };
+          }
+
+          if (data.currentPitcher && data.currentPitcher !== prev.pitcher && currentRoster.includes(data.currentPitcher)) {
+            const n = new Notification(`${data.currentPitcher.split(" ").slice(-1)[0]} now pitching`, {
+              body: `${gameLabel} · Watch on ${broadcastName}`,
+              tag: `pitch-${game.id}-${data.currentPitcher}`,
+            });
+            if (broadcastUrl) n.onclick = () => { window.open(broadcastUrl, "_blank"); n.close(); };
+          }
+
+          notifiedAtBat.current[game.id] = { batter: data.currentBatter, pitcher: data.currentPitcher };
         }
       } catch { }
     }
@@ -164,6 +199,14 @@ export default function App() {
               <span style={{ fontSize: 11, color: "var(--text-muted)", marginRight: 4 }}>
                 {gamesLoading ? <span className="spinner" /> : `${playingCount} game${playingCount !== 1 ? "s" : ""} with your players`}
               </span>
+            )}
+            {roster.length > 0 && notifPermission !== "granted" && notifPermission !== "denied" && (
+              <button className="btn-outline" onClick={requestNotifications} title="Get notified when your players are up to bat">
+                Enable Alerts
+              </button>
+            )}
+            {roster.length > 0 && notifPermission === "granted" && (
+              <span style={{ fontSize: 11, color: "var(--text-muted)" }} title="Notifications on">🔔</span>
             )}
             {roster.length > 0 && <button className="btn-ghost" onClick={clearRoster}>Clear</button>}
             <button className="btn-outline" onClick={() => setSetupOpen(o => !o)}>

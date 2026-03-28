@@ -1,4 +1,7 @@
 // Runs inside ESPN Fantasy pages — handles roster fetch requests from the popup
+// Guard against double-injection
+if (window.__nayloradeLoaded) throw new Error("already loaded");
+window.__nayloradeLoaded = true;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type !== "FETCH_ROSTER") return;

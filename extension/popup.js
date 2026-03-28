@@ -101,6 +101,14 @@ async function fetchESPNRoster(leagueId) {
     throw new Error("No ESPN tab found — open ESPN Fantasy Baseball in a tab first, then try again.");
   }
 
+  // Inject content script in case the tab was open before the extension loaded
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: espnTabs[0].id },
+      files: ["content.js"],
+    });
+  } catch { /* already injected — that's fine */ }
+
   const result = await chrome.tabs.sendMessage(espnTabs[0].id, {
     type: "FETCH_ROSTER",
     leagueId,

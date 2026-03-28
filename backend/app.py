@@ -210,7 +210,7 @@ def fetch_live_feed(game_id):
     return resp.json()
 
 
-def parse_live_feed(feed):
+def parse_live_feed(feed, roster_names=None):
     lp = feed.get("liveData", {}).get("plays", {})
     current = lp.get("currentPlay", {})
     last_plays = lp.get("allPlays", [])
@@ -245,6 +245,26 @@ def parse_live_feed(feed):
         "third":  bool(offense.get("third")),
     }
 
+    # All completed plays today involving roster players (for feed history on load)
+    roster_plays = []
+    if roster_names:
+        for play in last_plays:
+            about = play.get("about", {})
+            if not about.get("isComplete"):
+                continue
+            matchup = play.get("matchup", {})
+            play_batter = matchup.get("batter", {}).get("fullName", "")
+            play_pitcher = matchup.get("pitcher", {}).get("fullName", "")
+            if play_batter in roster_names or play_pitcher in roster_names:
+                desc = play.get("result", {}).get("description", "")
+                if desc:
+                    roster_plays.append({
+                        "description": desc,
+                        "batter": play_batter,
+                        "pitcher": play_pitcher,
+                        "startTime": about.get("startTime", ""),
+                    })
+
     return {
         "currentBatter": batter,
         "currentPitcher": pitcher,
@@ -257,6 +277,7 @@ def parse_live_feed(feed):
             "outs": count.get("outs", 0),
         },
         "bases": bases,
+        "rosterPlays": roster_plays,
     }
 
 
@@ -388,7 +409,7 @@ def fetch_player_news(player_name):
         if name_lower in text:
             results.append({k: v for k, v in item.items() if k != "_desc"})
             results[-1]["source"] = "FanGraphs"
-            if len(results) >= 3:
+            if len(results) >= 5:
                 break
 
     # 2. Google News — restricted to analytical outlets, exclude recaps
@@ -404,7 +425,7 @@ def fetch_player_news(player_name):
             if item["title"] not in seen_titles and _is_analytical(item["title"]):
                 results.append({k: v for k, v in item.items() if k != "_desc"})
                 seen_titles.add(item["title"])
-                if len(results) >= 3:
+                if len(results) >= 5:
                     break
 
     _news_cache[player_name] = {"ts": now, "items": results}
@@ -480,9 +501,11 @@ def get_games():
 
 @app.route("/api/games/<int:game_id>/live", methods=["GET"])
 def get_live(game_id):
+    roster_param = request.args.get("roster", "")
+    roster_names = set(p.strip() for p in roster_param.split(",") if p.strip())
     try:
         feed = fetch_live_feed(game_id)
-        data = parse_live_feed(feed)
+        data = parse_live_feed(feed, roster_names or None)
         return jsonify(data)
     except Exception as e:
         return jsonify({"error": str(e)}), 500

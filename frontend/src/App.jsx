@@ -35,19 +35,50 @@ export default function App() {
   const seenPlays = useRef(new Set());
   const notifiedAtBat = useRef({}); // {gameId: {batter, pitcher}} — last state we notified about
 
-  const loadGames = useCallback(async (rosterList) => {
+  const loadHistoricalPlays = useCallback(async (currentGames, currentRoster) => {
+    const relevantGames = currentGames.filter(g => g.status === "Live" || g.status === "Final");
+    if (!relevantGames.length) return;
+    const rosterParam = encodeURIComponent(currentRoster.join(","));
+    const historyItems = [];
+    for (const game of relevantGames) {
+      try {
+        const data = await apiFetch(`/api/games/${game.id}/live?roster=${rosterParam}`);
+        const gameLabel = `${game.awayTeam.abbr} @ ${game.homeTeam.abbr}`;
+        for (const play of data.rosterPlays || []) {
+          const player = currentRoster.find(p => p === play.batter || p === play.pitcher);
+          if (!player) continue;
+          const playId = `${game.id}-${player}-${play.description.slice(0, 40)}`;
+          if (!seenPlays.current.has(playId)) {
+            seenPlays.current.add(playId);
+            const t = play.startTime ? new Date(play.startTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+            historyItems.push({ id: playId, time: t, player, game: gameLabel, text: play.description });
+          }
+        }
+      } catch { }
+    }
+    if (historyItems.length) {
+      setFeed(prev => {
+        const combined = [...historyItems, ...prev];
+        const seen = new Set();
+        return combined.filter(item => seen.has(item.id) ? false : (seen.add(item.id), true)).slice(0, 200);
+      });
+    }
+  }, []);
+
+  const loadGames = useCallback(async (rosterList, seedHistory = false) => {
     if (!rosterList?.length) return;
     setGamesLoading(true);
     setGamesError(null);
     try {
       const param = encodeURIComponent(rosterList.join(","));
       const data = await apiFetch(`/api/games?roster=${param}`);
-      const games = data.games || [];
-      setGames(games);
+      const loadedGames = data.games || [];
+      setGames(loadedGames);
+      if (seedHistory) loadHistoricalPlays(loadedGames, rosterList);
 
       // Fetch news for players in games where they appear
       const playersInGames = [...new Set(
-        games.flatMap(g => (g.fantasyPlayers || []).map(fp => fp.name))
+        loadedGames.flatMap(g => (g.fantasyPlayers || []).map(fp => fp.name))
       )];
       if (playersInGames.length) {
         const newsParam = encodeURIComponent(playersInGames.join(","));
@@ -60,7 +91,7 @@ export default function App() {
     } finally {
       setGamesLoading(false);
     }
-  }, []);
+  }, [loadHistoricalPlays]);
 
   async function requestNotifications() {
     if (typeof Notification === "undefined") return;
@@ -149,7 +180,7 @@ export default function App() {
 
   useEffect(() => {
     if (!roster.length) return;
-    loadGames(roster);
+    loadGames(roster, true); // seed historical plays on first load
     const interval = setInterval(() => loadGames(roster), 60_000);
     return () => clearInterval(interval);
   }, [roster, loadGames]);

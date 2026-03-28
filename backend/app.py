@@ -8,6 +8,7 @@ CORS(app, resources={r"/api/*": {"origins": [
     "https://naylorade.vercel.app",
     "http://localhost:5173",
     "http://localhost:3000",
+    r"chrome-extension://.*",
 ]}}, supports_credentials=True)
 
 # ── Broadcast config ──────────────────────────────────────────────────────────

@@ -97,7 +97,7 @@ syncBtn.addEventListener("click", async () => {
   }
 });
 
-// ── Fetch roster from intercepted ESPN page response ─────────────────────────
+// ── Fetch roster via executeScript MAIN world (bypasses ESPN CSP) ─────────────
 async function fetchESPNRoster(leagueId) {
   const espnTabs = [
     ...await chrome.tabs.query({ url: "*://fantasy.espn.com/*" }),
@@ -107,19 +107,43 @@ async function fetchESPNRoster(leagueId) {
     throw new Error("No ESPN Fantasy tab found — open espn.com/fantasy first.");
   }
 
-  // Inject content script on demand for tabs open before extension load
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId: espnTabs[0].id },
-      files: ["content.js"],
-    });
-  } catch { /* already injected */ }
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: espnTabs[0].id },
+    world: "MAIN",
+    func: () => {
+      // 1. Try ESPN window globals
+      for (const g of ["__espnfec__", "espnfec", "espnBootstrap", "__ESPN__", "__NEXT_DATA__"]) {
+        if (window[g]) return { source: g, data: window[g] };
+      }
+      // 2. Try player profile links (href contains /mlb/player/)
+      const links = [...document.querySelectorAll("a[href*='/mlb/player/']")];
+      if (links.length) {
+        return { source: "links", players: links.map(l => l.textContent.trim()).filter(Boolean) };
+      }
+      // 3. Return debug info
+      const keys = Object.keys(window).filter(k => k.length < 40 && !/^[0-9]/.test(k));
+      return { source: "none", windowKeys: keys.slice(0, 60) };
+    },
+  });
 
-  const result = await chrome.tabs.sendMessage(espnTabs[0].id, { type: "GET_ROSTER" });
+  const result = results?.[0]?.result;
+  if (!result) throw new Error("Could not read ESPN page — make sure it is fully loaded.");
 
-  if (!result) throw new Error("No response from ESPN tab — reload it and try again.");
-  if (result.error) throw new Error(result.error);
-  return parseRoster(result.data);
+  // Got player links directly
+  if (result.source === "links" && result.players?.length) {
+    return [...new Set(result.players)];
+  }
+
+  // Got a window global — try to parse roster from it
+  if (result.source !== "none") {
+    const players = parseRoster(result.data);
+    if (players.length) return players;
+  }
+
+  // Show debug info so we know what to target next
+  throw new Error(`Could not find roster data on page.\nSource tried: ${result.source}\n${
+    result.windowKeys ? "Window keys: " + result.windowKeys.join(", ") : "Players found: " + JSON.stringify(result.players)
+  }`);
 }
 
 function parseRoster(data) {

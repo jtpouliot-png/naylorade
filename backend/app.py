@@ -1,7 +1,10 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import requests
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
+import xml.etree.ElementTree as ET
+import time
+from email.utils import parsedate_to_datetime
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": [
@@ -279,6 +282,57 @@ def get_players_in_game(game_id, roster_names):
     return found
 
 
+# ── Player news ───────────────────────────────────────────────────────────────
+
+_news_cache = {}  # {player_name: {"ts": float, "items": list}}
+NEWS_CACHE_TTL = 20 * 60  # 20 minutes
+
+
+def fetch_player_news(player_name):
+    now = time.time()
+    cached = _news_cache.get(player_name)
+    if cached and now - cached["ts"] < NEWS_CACHE_TTL:
+        return cached["items"]
+
+    query = requests.utils.quote(f"{player_name} MLB baseball")
+    url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+    try:
+        resp = requests.get(url, timeout=8, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        })
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+    except Exception as e:
+        print(f"News fetch error for {player_name}: {e}", flush=True)
+        return []
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=3)
+    items = []
+    for item in root.findall(".//item"):
+        title = item.findtext("title", "").strip()
+        link = item.findtext("link", "").strip()
+        pub_str = item.findtext("pubDate", "")
+        source_el = item.find("source")
+        source = source_el.text.strip() if source_el is not None else ""
+
+        try:
+            pub_dt = parsedate_to_datetime(pub_str)
+            if pub_dt < cutoff:
+                continue
+            published_iso = pub_dt.isoformat()
+        except Exception:
+            published_iso = pub_str
+
+        if title and link:
+            items.append({"title": title, "url": link, "source": source, "published": published_iso})
+
+        if len(items) >= 3:
+            break
+
+    _news_cache[player_name] = {"ts": now, "items": items}
+    return items
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/api/roster", methods=["POST"])
@@ -354,6 +408,19 @@ def get_live(game_id):
         return jsonify(data)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/news", methods=["GET"])
+def get_news():
+    players_param = request.args.get("players", "")
+    players = [p.strip() for p in players_param.split(",") if p.strip()]
+    if not players:
+        return jsonify({"news": {}})
+
+    result = {}
+    for player in players[:20]:
+        result[player] = fetch_player_news(player)
+    return jsonify({"news": result})
 
 
 @app.route("/api/health", methods=["GET"])

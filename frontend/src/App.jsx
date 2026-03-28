@@ -27,6 +27,7 @@ export default function App() {
   const [gamesLoading, setGamesLoading] = useState(false);
   const [gamesError, setGamesError] = useState(null);
   const [liveData, setLiveData] = useState({});
+  const [newsData, setNewsData] = useState({});
   const [setupOpen, setSetupOpen] = useState(false);
   const [rosterText, setRosterText] = useState(() => (storage("naylorade_roster") || []).join("\n"));
   const [feed, setFeed] = useState([]); // [{time, player, game, text, id}]
@@ -41,7 +42,19 @@ export default function App() {
     try {
       const param = encodeURIComponent(rosterList.join(","));
       const data = await apiFetch(`/api/games?roster=${param}`);
-      setGames(data.games || []);
+      const games = data.games || [];
+      setGames(games);
+
+      // Fetch news for players in games where they appear
+      const playersInGames = [...new Set(
+        games.flatMap(g => (g.fantasyPlayers || []).map(fp => fp.name))
+      )];
+      if (playersInGames.length) {
+        const newsParam = encodeURIComponent(playersInGames.join(","));
+        apiFetch(`/api/news?players=${newsParam}`)
+          .then(d => setNewsData(d.news || {}))
+          .catch(() => {});
+      }
     } catch (e) {
       setGamesError(e.message);
     } finally {
@@ -281,7 +294,7 @@ export default function App() {
               </div>
               {gamesLoading
                 ? <div style={{ padding: "24px 18px" }}><span className="spinner" /></div>
-                : <AllGamesBoard games={games} liveData={liveData} />
+                : <AllGamesBoard games={games} liveData={liveData} newsData={newsData} />
               }
             </div>
 
@@ -377,20 +390,28 @@ function GameCard({ game }) {
   );
 }
 
-function AllGamesBoard({ games, liveData }) {
+function AllGamesBoard({ games, liveData, newsData }) {
   if (!games.length) {
     return <div style={{ padding: "24px 18px", fontSize: 13, color: "var(--text-muted)" }}>No games today.</div>;
   }
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 1 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 1 }}>
       {games.map(game => (
-        <ScoreCard key={game.id} game={game} live={liveData[game.id]} />
+        <ScoreCard key={game.id} game={game} live={liveData[game.id]} newsData={newsData} />
       ))}
     </div>
   );
 }
 
-function ScoreCard({ game, live }) {
+function timeAgo(isoStr) {
+  if (!isoStr) return "";
+  const diff = (Date.now() - new Date(isoStr)) / 1000;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function ScoreCard({ game, live, newsData }) {
   const isLive = game.status === "Live";
   const isFinal = game.status === "Final";
   return (
@@ -447,6 +468,31 @@ function ScoreCard({ game, live }) {
       {isLive && live?.lastPlay && (
         <div style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.5, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
           {live.lastPlay}
+        </div>
+      )}
+      {/* News per player */}
+      {(game.fantasyPlayers || []).some(fp => newsData?.[fp.name]?.length > 0) && (
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+          {(game.fantasyPlayers || []).map(fp => {
+            const items = newsData?.[fp.name];
+            if (!items?.length) return null;
+            return (
+              <div key={fp.name} style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.06em", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>
+                  {fp.name.split(" ").slice(-1)[0]}
+                </div>
+                {items.map((item, i) => (
+                  <a key={i} href={item.url} target="_blank" rel="noreferrer"
+                    style={{ display: "block", textDecoration: "none", marginBottom: 5 }}>
+                    <div style={{ fontSize: 11, color: "var(--text-primary)", lineHeight: 1.45 }}>{item.title}</div>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
+                      {item.source}{item.source && item.published ? " · " : ""}{timeAgo(item.published)}
+                    </div>
+                  </a>
+                ))}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

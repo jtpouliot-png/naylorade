@@ -107,6 +107,11 @@ async function fetchESPNRoster(leagueId) {
     if (resp.status === 404) throw new Error("League not found — double-check your league ID.");
     if (!resp.ok) throw new Error(`ESPN returned ${resp.status}`);
 
+    const contentType = resp.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      throw new Error("ESPN returned an HTML page instead of data — make sure you are logged into ESPN Fantasy and try again.");
+    }
+
     const data = await resp.json();
     return parseRoster(data);
   }

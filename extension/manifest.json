@@ -12,5 +12,12 @@
   "action": {
     "default_popup": "popup.html",
     "default_title": "Naylorade Roster Sync"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.espn.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
 }

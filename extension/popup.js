@@ -94,41 +94,20 @@ syncBtn.addEventListener("click", async () => {
   }
 });
 
-// ── Fetch roster by executing inside an ESPN tab (bypasses SameSite cookie restrictions) ──
+// ── Fetch roster via content script inside ESPN tab ───────────────────────────
 async function fetchESPNRoster(leagueId) {
   const espnTabs = await chrome.tabs.query({ url: "*://*.espn.com/*" });
   if (!espnTabs.length) {
-    throw new Error("No ESPN tab found. Open ESPN Fantasy Baseball in a tab first, then try again.");
+    throw new Error("No ESPN tab found — open ESPN Fantasy Baseball in a tab first, then try again.");
   }
 
-  const year = new Date().getFullYear();
-
-  const results = await chrome.scripting.executeScript({
-    target: { tabId: espnTabs[0].id },
-    func: async (leagueId, year) => {
-      for (const y of [year, year - 1]) {
-        const url = `https://fantasy.espn.com/apis/v3/games/flb/seasons/${y}/segments/0/leagues/${leagueId}?view=mRoster`;
-        try {
-          const resp = await fetch(url, { credentials: "include" });
-          if (resp.status === 500 && y === year) continue;
-          if (resp.status === 401) return { error: "ESPN credentials expired — log out and back in." };
-          if (resp.status === 404) return { error: "League not found — check your league ID." };
-          if (!resp.ok) return { error: `ESPN returned ${resp.status}` };
-          const ct = resp.headers.get("content-type") || "";
-          if (!ct.includes("application/json")) return { error: "ESPN returned an unexpected page — are you logged in?" };
-          return { data: await resp.json() };
-        } catch (e) {
-          if (y === year) continue;
-          return { error: e.message };
-        }
-      }
-      return { error: "Could not load roster from ESPN for this year or last." };
-    },
-    args: [leagueId, year],
+  const result = await chrome.tabs.sendMessage(espnTabs[0].id, {
+    type: "FETCH_ROSTER",
+    leagueId,
+    year: new Date().getFullYear(),
   });
 
-  const result = results?.[0]?.result;
-  if (!result) throw new Error("Script injection failed — make sure the ESPN tab is fully loaded.");
+  if (!result) throw new Error("No response from ESPN tab — reload the ESPN page and try again.");
   if (result.error) throw new Error(result.error);
   return parseRoster(result.data);
 }

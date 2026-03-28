@@ -376,8 +376,10 @@ def fetch_player_news(player_name):
     name_lower = player_name.lower()
     results = []
 
-    # 1. FanGraphs — show any mention of the player in the last 3 days
+    # 1. FanGraphs — show any mention of the player in the last 3 days (exclude Ottoneu CDN)
     for item in _get_fangraphs_items():
+        if "cdn-ottoneu.fangraphs.com" in item.get("url", ""):
+            continue
         text = (item["title"] + " " + item.get("_desc", "")).lower()
         if name_lower in text:
             results.append({k: v for k, v in item.items() if k != "_desc"})

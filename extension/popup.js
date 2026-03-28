@@ -122,7 +122,8 @@ async function fetchESPNRoster(leagueId) {
         return typeof obj === "string" && obj.length > 40 ? obj.slice(0, 40) + "…" : obj;
       }
 
-      return { source: "__NEXT_DATA__", structure: summarize(nd) };
+      const pp = nd?.props?.pageProps;
+      return { source: "__NEXT_DATA__", structure: summarize(pp) };
     },
   });
 

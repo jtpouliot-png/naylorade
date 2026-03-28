@@ -12,18 +12,5 @@
   "action": {
     "default_popup": "popup.html",
     "default_title": "Naylorade Roster Sync"
-  },
-  "content_scripts": [
-    {
-      "matches": ["*://fantasy.espn.com/*", "*://www.espn.com/fantasy/*"],
-      "js": ["content.js"],
-      "run_at": "document_start"
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["interceptor.js"],
-      "matches": ["*://fantasy.espn.com/*", "*://www.espn.com/fantasy/*"]
-    }
-  ]
+  }
 }

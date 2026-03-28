@@ -23,14 +23,15 @@ BROADCAST_META = {
     "FS1":         {"color": "#f0e8b8", "url": "https://fox.com/channel/fs1"},
     "TBS":         {"color": "#d4f0b8", "url": "https://watch.tbs.com"},
     "MLB Network": {"color": "#f0b8b8", "url": "https://mlb.com/network"},
-    "default":     {"color": "#e0dedd", "url": "https://mlb.com"},
+    "default":     {"color": "#e0dedd", "url": None},  # filled in per-game with live-stream-games link
 }
 
-def get_broadcast_meta(name):
+def get_broadcast_meta(name, game_pk=None):
+    mlbtv_url = f"https://www.mlb.com/live-stream-games/{game_pk}" if game_pk else "https://www.mlb.com"
     for key in BROADCAST_META:
         if key.lower() in name.lower():
-            return {"name": name, **BROADCAST_META[key]}
-    return {"name": name, **BROADCAST_META["default"]}
+            return {"name": name, "mlbtvUrl": mlbtv_url, **BROADCAST_META[key]}
+    return {"name": name, "url": mlbtv_url, "mlbtvUrl": mlbtv_url, **{k: v for k, v in BROADCAST_META["default"].items() if k != "url"}}
 
 
 # ── ESPN roster ───────────────────────────────────────────────────────────────
@@ -179,7 +180,7 @@ def parse_game(game):
             "abbr": away_team.get("abbreviation", ""),
             "score": away_score,
         },
-        "broadcast": get_broadcast_meta(broadcast_name),
+        "broadcast": get_broadcast_meta(broadcast_name, game.get("gamePk")),
         "probablePitchers": {
             "home": home_pitcher,
             "away": away_pitcher,

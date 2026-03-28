@@ -116,9 +116,10 @@ async function fetchESPNRoster(leagueId) {
           if (resp.status === 401) return { error: "ESPN session expired — log out and back in." };
           if (resp.status === 404) return { error: "League not found — check your league ID." };
           if (!resp.ok) return { error: `ESPN returned ${resp.status}` };
-          const ct = resp.headers.get("content-type") || "";
-          if (!ct.includes("application/json")) return { error: "ESPN returned an unexpected page." };
-          return { data: await resp.json() };
+          let data;
+          try { data = await resp.json(); }
+          catch { return { error: `ESPN returned non-JSON (content-type: ${resp.headers.get("content-type")})` }; }
+          return { data };
         } catch (e) {
           if (y === year) continue;
           return { error: e.message };

@@ -246,7 +246,7 @@ def parse_live_feed(feed):
 
 
 def get_players_in_game(game_id, roster_names):
-    """Check boxscore for which roster players are in this game."""
+    """Check boxscore for which roster players are in this game, with positions."""
     url = f"{MLB_BASE}/game/{game_id}/boxscore"
     try:
         resp = requests.get(url, timeout=8)
@@ -262,7 +262,8 @@ def get_players_in_game(game_id, roster_names):
         for pid, pdata in players.items():
             name = pdata.get("person", {}).get("fullName", "")
             if name in roster_names:
-                found.append(name)
+                position = pdata.get("position", {}).get("abbreviation", "")
+                found.append({"name": name, "position": position})
     return found
 
 
@@ -312,18 +313,14 @@ def get_games():
     if not roster:
         return jsonify({"games": games})
 
-    # Filter to games containing roster players + attach which players
-    filtered = []
+    # Annotate all games with which roster players are in each game
     for game in games:
         game_id = game["id"]
-        # Check probable pitchers first (fast, no extra API call)
         pp = game.get("probablePitchers", {})
         probable = [v for v in pp.values() if v]
 
-        # For preview games just check probables; for live/final check boxscore
         if game["status"] == "Preview":
-            found = [p for p in roster if p in probable]
-            # Also do a quick boxscore check if no probables matched
+            found = [{"name": p, "position": "SP"} for p in roster if p in probable]
             if not found:
                 found = get_players_in_game(game_id, roster)
         else:
@@ -331,9 +328,8 @@ def get_games():
 
         if found:
             game["fantasyPlayers"] = found
-            filtered.append(game)
 
-    return jsonify({"games": filtered})
+    return jsonify({"games": games})
 
 
 @app.route("/api/games/<int:game_id>/live", methods=["GET"])

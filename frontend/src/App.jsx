@@ -115,7 +115,7 @@ export default function App() {
   }, [games, roster, pollAllLive]);
 
   const live = selectedGame ? liveData[selectedGame.id] : null;
-  const playingCount = roster.filter(p => games.some(g => g.fantasyPlayers?.includes(p))).length;
+  const playingCount = roster.filter(p => games.some(g => g.fantasyPlayers?.some(fp => fp.name === p))).length;
 
   return (
     <>
@@ -216,7 +216,7 @@ export default function App() {
               <div style={{ overflowY: "auto", flex: 1 }}>
                 {gamesError && <div style={{ padding: "16px 18px", fontSize: 12, color: "#c0392b" }}>⚠ {gamesError}</div>}
                 {!gamesLoading && !gamesError && games.length === 0 && (
-                  <div style={{ padding: "24px 18px", fontSize: 13, color: "var(--text-muted)", lineHeight: 1.6 }}>No games with your players today.</div>
+                  <div style={{ padding: "24px 18px", fontSize: 13, color: "var(--text-muted)", lineHeight: 1.6 }}>No MLB games today.</div>
                 )}
                 {games.map(game => (
                   <GameCard key={game.id} game={game} selected={selectedGame?.id === game.id} onClick={() => setSelectedGame(game)} />
@@ -227,7 +227,7 @@ export default function App() {
                 <div style={{ fontSize: 9, fontWeight: 500, letterSpacing: "0.12em", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 8 }}>Roster</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 150, overflowY: "auto" }}>
                   {roster.map(p => {
-                    const isPlaying = games.some(g => g.fantasyPlayers?.includes(p));
+                    const isPlaying = games.some(g => g.fantasyPlayers?.some(fp => fp.name === p));
                     return (
                       <div key={p} style={{ display: "flex", alignItems: "center", gap: 7, opacity: isPlaying ? 1 : 0.35 }}>
                         <div style={{ width: 5, height: 5, borderRadius: "50%", background: isPlaying ? "var(--text-primary)" : "var(--border-strong)", flexShrink: 0 }} />
@@ -323,8 +323,11 @@ function GameCard({ game, selected, onClick }) {
         )}
       </div>
       <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
-        {(game.fantasyPlayers || []).map(p => (
-          <span key={p} className="player-chip">{p.split(" ").slice(-1)[0]}</span>
+        {(game.fantasyPlayers || []).map(fp => (
+          <span key={fp.name} className="player-chip">
+            {fp.position && <span style={{ opacity: 0.55, marginRight: 3 }}>{fp.position}</span>}
+            {fp.name.split(" ").slice(-1)[0]}
+          </span>
         ))}
       </div>
     </div>
@@ -367,22 +370,27 @@ function Gamecast({ game, live }) {
         <span style={{ marginLeft: "auto", opacity: 0.45 }}>↗</span>
       </a>
 
-      <Section title="Your Players">
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {(game.fantasyPlayers || []).map(p => {
-            const isActive = isLive && (p === batter || p === pitcher);
-            return (
-              <div key={p} className={`gc-player-card${isActive ? " active" : ""}`}>
-                <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em", marginBottom: 3 }}>{p}</div>
-                <div style={{ fontSize: 9, fontWeight: 500, color: isActive ? "var(--text-primary)" : "var(--text-muted)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
-                  {isLive && p === batter ? "At bat" : isLive && p === pitcher ? "Pitching" : isLive ? "On field" : "Starting"}
+      {(game.fantasyPlayers || []).length > 0 && (
+        <Section title="Your Players">
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {(game.fantasyPlayers || []).map(fp => {
+              const isActive = isLive && (fp.name === batter || fp.name === pitcher);
+              return (
+                <div key={fp.name} className={`gc-player-card${isActive ? " active" : ""}`}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 5, marginBottom: 3 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em" }}>{fp.name}</span>
+                    {fp.position && <span style={{ fontSize: 9, fontWeight: 500, color: "var(--text-muted)", letterSpacing: "0.06em" }}>{fp.position}</span>}
+                  </div>
+                  <div style={{ fontSize: 9, fontWeight: 500, color: isActive ? "var(--text-primary)" : "var(--text-muted)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                    {isLive && fp.name === batter ? "At bat" : isLive && fp.name === pitcher ? "Pitching" : isLive ? "On field" : "Starting"}
+                  </div>
+                  {isActive && <div style={{ marginTop: 7, height: 2, background: "var(--text-primary)", borderRadius: 1 }} />}
                 </div>
-                {isActive && <div style={{ marginTop: 7, height: 2, background: "var(--text-primary)", borderRadius: 1 }} />}
-              </div>
-            );
-          })}
-        </div>
-      </Section>
+              );
+            })}
+          </div>
+        </Section>
+      )}
 
       {isLive && count && (
         <Section title="At Bat">

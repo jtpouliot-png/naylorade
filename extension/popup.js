@@ -122,34 +122,21 @@ async function fetchESPNRoster(leagueId) {
         return typeof obj === "string" && obj.length > 40 ? obj.slice(0, 40) + "…" : obj;
       }
 
-      // __NEXT_DATA__ has no roster - data is loaded client-side, probe DOM instead
-      const selectors = [
-        'a[href*="/mlb/player/"]',
-        '[class*="PlayerName"]',
-        '[class*="player-name"]',
-        '[class*="playerName"]',
-        '[class*="player_name"]',
-        '[class*="AthleteName"]',
-        '.truncate',
-      ];
-      const results = {};
-      for (const sel of selectors) {
-        const els = [...document.querySelectorAll(sel)];
-        if (els.length) results[sel] = els.slice(0, 5).map(e => e.textContent.trim()).filter(Boolean);
-      }
-      return { source: "dom_probe", results };
+      // Roster is rendered client-side in .truncate elements
+      const names = [...document.querySelectorAll(".truncate")]
+        .map(el => el.textContent.trim())
+        .filter(n => n.includes(" ") && /^[A-Z]/.test(n) && !/[()0-9]/.test(n));
+      return { source: "dom", players: [...new Set(names)] };
     },
   });
 
   const result = results?.[0]?.result;
   if (!result) throw new Error("Could not read ESPN page — make sure it is fully loaded.");
 
-  // Got player links directly
-  if (result.source === "links" && result.players?.length) {
-    return [...new Set(result.players)];
+  if ((result.source === "links" || result.source === "dom") && result.players?.length) {
+    return result.players;
   }
 
-  // Always dump what we found for debugging
   throw new Error("Structure:\n" + JSON.stringify(result.structure ?? result, null, 2).slice(0, 800));
 }
 

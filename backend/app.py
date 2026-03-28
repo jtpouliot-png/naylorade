@@ -26,14 +26,11 @@ BROADCAST_META = {
     "default":     {"color": "#e0dedd", "url": None},  # filled in per-game with live-stream-games link
 }
 
-def get_broadcast_meta(name, game_pk=None):
-    mlbtv_url = f"https://www.mlb.com/tv/g{game_pk}" if game_pk else "https://www.mlb.com"
+def get_broadcast_meta(name):
     for key in BROADCAST_META:
         if key.lower() in name.lower():
-            meta = {"name": name, **BROADCAST_META[key]}
-            meta["mlbtvUrl"] = mlbtv_url
-            return meta
-    return {"name": name, "url": mlbtv_url, "color": BROADCAST_META["default"]["color"]}
+            return {"name": name, **BROADCAST_META[key]}
+    return {"name": name, **BROADCAST_META["default"]}
 
 
 # ── ESPN roster ───────────────────────────────────────────────────────────────
@@ -145,10 +142,22 @@ def parse_game(game):
     home_score = home.get("score")
     away_score = away.get("score")
 
-    # Broadcasts
-    broadcasts = game.get("broadcasts", [])
-    national = [b for b in broadcasts if b.get("type") == "N" or b.get("isNational")]
-    broadcast_name = national[0].get("name", "Regional") if national else (broadcasts[0].get("name", "Regional") if broadcasts else "MLB.TV")
+    # Broadcasts — build ordered list: national networks first, then MLB.TV
+    raw_broadcasts = game.get("broadcasts", [])
+    national = [b for b in raw_broadcasts if b.get("type") == "N" or b.get("isNational")]
+    game_pk = game.get("gamePk")
+    mlbtv_url = f"https://www.mlb.com/tv/g{game_pk}" if game_pk else "https://www.mlb.com"
+
+    watch_options = []
+    seen = set()
+    for b in national:
+        name = b.get("name", "").strip()
+        if name and name not in seen:
+            seen.add(name)
+            watch_options.append(get_broadcast_meta(name))
+
+    # Always include MLB.TV as a direct watch option
+    watch_options.append({"name": "MLB.TV", "color": BROADCAST_META["default"]["color"], "url": mlbtv_url})
 
     # Probable pitchers
     home_pitcher = home.get("probablePitcher", {}).get("fullName")
@@ -182,7 +191,7 @@ def parse_game(game):
             "abbr": away_team.get("abbreviation", ""),
             "score": away_score,
         },
-        "broadcast": get_broadcast_meta(broadcast_name, game.get("gamePk")),
+        "broadcasts": watch_options,
         "probablePitchers": {
             "home": home_pitcher,
             "away": away_pitcher,

@@ -107,8 +107,9 @@ export default function App() {
         if (Notification.permission === "granted") {
           const prev = notifiedAtBat.current[game.id] || {};
           const gameLabel = `${game.awayTeam.abbr} @ ${game.homeTeam.abbr}`;
-          const watchUrl = game.broadcast?.mlbtvUrl || game.broadcast?.url;
-          const broadcastName = game.broadcast?.name;
+          const mlbtv = (game.broadcasts || []).find(b => b.name === "MLB.TV");
+          const watchUrl = mlbtv?.url || game.broadcasts?.[0]?.url;
+          const broadcastName = (game.broadcasts || []).filter(b => b.name !== "MLB.TV").map(b => b.name).join("/") || "MLB.TV";
 
           if (data.currentBatter && data.currentBatter !== prev.batter && currentRoster.includes(data.currentBatter)) {
             const n = new Notification(`${data.currentBatter.split(" ").slice(-1)[0]} up to bat`, {
@@ -340,9 +341,14 @@ function GameCard({ game }) {
         ) : (
           <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{game.time}</span>
         )}
-        <span style={{ fontSize: 9, fontWeight: 500, padding: "2px 8px", borderRadius: 100, background: game.broadcast?.color || "#e0dedd", color: "var(--text-primary)" }}>
-          {game.broadcast?.name}
-        </span>
+        <div style={{ display: "flex", gap: 3, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {(game.broadcasts || []).map(b => (
+            <a key={b.name} href={b.url || "#"} target="_blank" rel="noreferrer"
+              style={{ fontSize: 9, fontWeight: 500, padding: "2px 7px", borderRadius: 100, background: b.color || "#e0dedd", color: "var(--text-primary)", textDecoration: "none" }}>
+              {b.name}
+            </a>
+          ))}
+        </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
         {[game.awayTeam, null, game.homeTeam].map((team, i) =>
@@ -401,10 +407,14 @@ function ScoreCard({ game, live }) {
             {isFinal ? "Final" : game.time}
           </span>
         )}
-        <a href={game.broadcast?.mlbtvUrl || game.broadcast?.url || "#"} target="_blank" rel="noreferrer"
-          style={{ fontSize: 9, fontWeight: 500, padding: "2px 8px", borderRadius: 100, background: game.broadcast?.color || "#e0dedd", color: "var(--text-primary)", textDecoration: "none", letterSpacing: "0.04em" }}>
-          {game.broadcast?.name}
-        </a>
+        <div style={{ display: "flex", gap: 3, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {(game.broadcasts || []).map(b => (
+            <a key={b.name} href={b.url || "#"} target="_blank" rel="noreferrer"
+              style={{ fontSize: 9, fontWeight: 500, padding: "2px 7px", borderRadius: 100, background: b.color || "#e0dedd", color: "var(--text-primary)", textDecoration: "none", letterSpacing: "0.04em" }}>
+              {b.name}
+            </a>
+          ))}
+        </div>
       </div>
       {/* Teams + scores */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>

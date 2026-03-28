@@ -285,7 +285,7 @@ def get_players_in_game(game_id, roster_names):
 # ── Player news ───────────────────────────────────────────────────────────────
 
 _news_cache = {}  # {player_name: {"ts": float, "items": list}}
-NEWS_CACHE_TTL = 20 * 60  # 20 minutes
+NEWS_CACHE_TTL = 10 * 60  # 10 minutes
 
 FANGRAPHS_FEEDS = [
     "https://www.fangraphs.com/feed/",
@@ -345,6 +345,8 @@ def _fetch_rss_items(url):
     return items
 
 
+EXCLUDED_DOMAINS = {"cdn-ottoneu.fangraphs.com"}
+
 def _get_fangraphs_items():
     """Return cached FanGraphs feed items (both main + fantasy)."""
     now = time.time()
@@ -352,7 +354,9 @@ def _get_fangraphs_items():
         return _fg_cache["items"]
     all_items = []
     for feed_url in FANGRAPHS_FEEDS:
-        all_items.extend(_fetch_rss_items(feed_url))
+        for item in _fetch_rss_items(feed_url):
+            if not any(d in item.get("url", "") for d in EXCLUDED_DOMAINS):
+                all_items.append(item)
     _fg_cache["ts"] = now
     _fg_cache["items"] = all_items
     return all_items

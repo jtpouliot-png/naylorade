@@ -1,4 +1,3 @@
-const DEFAULT_API_URL = "https://naylorade-backend-production.up.railway.app";
 const DEFAULT_APP_URL = "https://naylorade.vercel.app";
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
@@ -10,33 +9,24 @@ const errorBox       = document.getElementById("error-box");
 const playerListWrap = document.getElementById("player-list-wrap");
 const playerList     = document.getElementById("player-list");
 const successMsg     = document.getElementById("success-msg");
-const apiUrlInput    = document.getElementById("api-url");
 const appUrlInput    = document.getElementById("app-url");
 const saveSettingsBtn= document.getElementById("save-settings-btn");
 
-let espnS2 = null;
-let swid   = null;
+let swid = null;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
-  // Load saved settings
-  const saved = await chrome.storage.local.get(["apiUrl", "appUrl", "leagueId", "lastRoster"]);
-  apiUrlInput.value = saved.apiUrl || DEFAULT_API_URL;
+  const saved = await chrome.storage.local.get(["appUrl", "leagueId", "lastRoster"]);
   appUrlInput.value = saved.appUrl || DEFAULT_APP_URL;
   if (saved.leagueId) leagueIdInput.value = saved.leagueId;
 
-  // Show previous roster if any
   if (saved.lastRoster?.length) {
     showPlayers(saved.lastRoster, false);
     openBtn.style.display = "block";
   }
 
-  // Read ESPN cookies
   await checkESPNCookies();
-
-  // Try to detect league ID from active tab
   await detectLeagueId();
-
   updateSyncBtn();
 }
 
@@ -48,15 +38,14 @@ async function checkESPNCookies() {
       chrome.cookies.get({ url: "https://fantasy.espn.com", name: "SWID" }),
     ]);
 
-    espnS2 = s2Cookie?.value || null;
-    swid   = swidCookie?.value || null;
+    swid = swidCookie?.value || null;
 
-    if (espnS2 && swid) {
+    if (s2Cookie && swidCookie) {
       espnStatus.innerHTML = `<div class="dot green"></div><span>Logged in — cookies found</span>`;
     } else {
       espnStatus.innerHTML = `<div class="dot red"></div><span>Not logged in — <a href="https://fantasy.espn.com/baseball" target="_blank" style="color:#1a1917">open ESPN Fantasy</a> first</span>`;
     }
-  } catch (e) {
+  } catch {
     espnStatus.innerHTML = `<div class="dot red"></div><span>Could not read cookies</span>`;
   }
 }
@@ -65,71 +54,39 @@ async function checkESPNCookies() {
 async function detectLeagueId() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const url = tab?.url || "";
-    const match = url.match(/leagueId=(\d+)/);
-    if (match && !leagueIdInput.value) {
-      leagueIdInput.value = match[1];
-    }
+    const match = (tab?.url || "").match(/leagueId=(\d+)/);
+    if (match && !leagueIdInput.value) leagueIdInput.value = match[1];
   } catch { }
 }
 
 // ── Sync button state ─────────────────────────────────────────────────────────
 function updateSyncBtn() {
-  const ready = espnS2 && swid && leagueIdInput.value.trim();
-  syncBtn.disabled = !ready;
+  syncBtn.disabled = !(swid && leagueIdInput.value.trim());
 }
 
 leagueIdInput.addEventListener("input", updateSyncBtn);
 
-// ── Sync roster ───────────────────────────────────────────────────────────────
+// ── Sync roster — calls ESPN directly from the browser ────────────────────────
 syncBtn.addEventListener("click", async () => {
   clearError();
   const leagueId = leagueIdInput.value.trim();
-  const apiUrl   = normalizeUrl(apiUrlInput.value.trim() || DEFAULT_API_URL);
   const appUrl   = normalizeUrl(appUrlInput.value.trim() || DEFAULT_APP_URL);
 
   if (!leagueId) return showError("Enter your ESPN league ID.");
-  if (!espnS2 || !swid) return showError("ESPN cookies not found. Log into ESPN Fantasy first.");
+  if (!swid)     return showError("ESPN cookies not found. Log into ESPN Fantasy first.");
 
-  // Save league ID
-  await chrome.storage.local.set({ leagueId, apiUrl, appUrl });
-
+  await chrome.storage.local.set({ leagueId, appUrl });
   setSyncing(true);
 
-  // First verify the backend is reachable
   try {
-    const health = await fetch(`${apiUrl}/api/health`);
-    if (!health.ok) throw new Error(`HTTP ${health.status}`);
-  } catch (e) {
-    setSyncing(false);
-    return showError(`Cannot reach backend.\nURL tried: ${apiUrl}/api/health\nError: ${e.message}\n\nOpen that URL in your browser to verify it works, then check Settings.`);
-  }
+    const players = await fetchESPNRoster(leagueId);
+    if (!players.length) throw new Error("No players found — check your league ID.");
 
-  try {
-    const res = await fetch(`${apiUrl}/api/roster`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ leagueId, espnS2, swid }),
-    });
-
-    const data = await res.json();
-    if (!res.ok) {
-      const detail = data.detail ? `\n\nESPN said: ${data.detail}` : "";
-      throw new Error(`${data.error || `HTTP ${res.status}`}${detail}`);
-    }
-
-    const players = data.players || [];
-    if (!players.length) throw new Error("No players found. Check your league ID.");
-
-    // Save roster for next time
     await chrome.storage.local.set({ lastRoster: players });
-
-    // Push to Naylorade
     await pushToNaylorade(players, appUrl);
 
     showPlayers(players, true);
     openBtn.style.display = "block";
-
   } catch (e) {
     showError(e.message);
   } finally {
@@ -137,23 +94,63 @@ syncBtn.addEventListener("click", async () => {
   }
 });
 
-// ── Push roster into Naylorade via scripting injection ────────────────────────
+// ── Fetch roster directly from ESPN (browser IP, existing session) ────────────
+async function fetchESPNRoster(leagueId) {
+  const year = new Date().getFullYear();
+
+  for (const y of [year, year - 1]) {
+    const url = `https://fantasy.espn.com/apis/v3/games/flb/seasons/${y}/segments/0/leagues/${leagueId}?view=mRoster`;
+    const resp = await fetch(url, { credentials: "include" });
+
+    if (resp.status === 500 && y === year) continue; // try previous year
+    if (resp.status === 401) throw new Error("ESPN credentials expired — log out and back into ESPN Fantasy.");
+    if (resp.status === 404) throw new Error("League not found — double-check your league ID.");
+    if (!resp.ok) throw new Error(`ESPN returned ${resp.status}`);
+
+    const data = await resp.json();
+    return parseRoster(data);
+  }
+
+  throw new Error("Could not load roster from ESPN for 2025 or 2026.");
+}
+
+function parseRoster(data) {
+  const members = data.members || [];
+  const teams   = data.teams   || [];
+
+  // Match the logged-in user's team via SWID
+  const swidClean = (swid || "").replace(/[{}]/g, "");
+  let myTeamId = null;
+  for (const member of members) {
+    if ((member.id || "").replace(/[{}]/g, "") === swidClean) {
+      myTeamId = member.onTeamId;
+      break;
+    }
+  }
+  if (myTeamId === null && teams.length) myTeamId = teams[0].id;
+
+  const myTeam = teams.find(t => t.id === myTeamId);
+  if (!myTeam) return [];
+
+  return (myTeam.roster?.entries || [])
+    .map(e => e.playerPoolEntry?.player?.fullName)
+    .filter(Boolean);
+}
+
+// ── Push roster into Naylorade ────────────────────────────────────────────────
 async function pushToNaylorade(players, appUrl) {
-  // Find an existing Naylorade tab
   const allTabs = await chrome.tabs.query({});
-  const nayloradeTab = allTabs.find(t => t.url?.startsWith(appUrl));
+  const existing = allTabs.find(t => t.url?.startsWith(appUrl));
 
   let tab;
-  if (nayloradeTab) {
-    tab = nayloradeTab;
+  if (existing) {
+    tab = existing;
     await chrome.tabs.update(tab.id, { active: true });
   } else {
-    // Open Naylorade in a new tab and wait for it to load
     tab = await chrome.tabs.create({ url: appUrl });
     await waitForTabLoad(tab.id);
   }
 
-  // Inject script to write localStorage and reload
   await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: (players) => {
@@ -165,7 +162,7 @@ async function pushToNaylorade(players, appUrl) {
 }
 
 function waitForTabLoad(tabId) {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     function listener(id, info) {
       if (id === tabId && info.status === "complete") {
         chrome.tabs.onUpdated.removeListener(listener);
@@ -178,7 +175,7 @@ function waitForTabLoad(tabId) {
 
 // ── Open Naylorade ────────────────────────────────────────────────────────────
 openBtn.addEventListener("click", async () => {
-  const appUrl = (appUrlInput.value.trim() || DEFAULT_APP_URL).replace(/\/$/, "");
+  const appUrl = normalizeUrl(appUrlInput.value.trim() || DEFAULT_APP_URL);
   const allTabs = await chrome.tabs.query({});
   const existing = allTabs.find(t => t.url?.startsWith(appUrl));
   if (existing) {
@@ -191,9 +188,7 @@ openBtn.addEventListener("click", async () => {
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 saveSettingsBtn.addEventListener("click", async () => {
-  const apiUrl = apiUrlInput.value.trim();
-  const appUrl = appUrlInput.value.trim();
-  await chrome.storage.local.set({ apiUrl, appUrl });
+  await chrome.storage.local.set({ appUrl: appUrlInput.value.trim() });
   saveSettingsBtn.textContent = "Saved ✓";
   setTimeout(() => saveSettingsBtn.textContent = "Save Settings", 1500);
 });
@@ -221,12 +216,9 @@ function clearError() {
 
 function setSyncing(on) {
   syncBtn.disabled = on;
-  syncBtn.innerHTML = on
-    ? '<span class="spinner"></span>Syncing...'
-    : "Sync Roster";
+  syncBtn.innerHTML = on ? '<span class="spinner"></span>Syncing...' : "Sync Roster";
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 function normalizeUrl(url) {
   url = url.trim().replace(/\/$/, "");
   if (url && !/^https?:\/\//i.test(url)) url = "https://" + url;

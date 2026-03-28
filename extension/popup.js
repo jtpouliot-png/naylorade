@@ -134,16 +134,8 @@ async function fetchESPNRoster(leagueId) {
     return [...new Set(result.players)];
   }
 
-  // Got a window global — try to parse roster from it
-  if (result.source !== "none") {
-    const players = parseRoster(result.data);
-    if (players.length) return players;
-  }
-
-  // Show debug info so we know what to target next
-  throw new Error(`Could not find roster data on page.\nSource tried: ${result.source}\n${
-    result.windowKeys ? "Window keys: " + result.windowKeys.join(", ") : "Players found: " + JSON.stringify(result.players)
-  }`);
+  // Always dump what we found for debugging
+  throw new Error("Structure:\n" + JSON.stringify(result.structure ?? result, null, 2).slice(0, 800));
 }
 
 function parseRoster(data) {

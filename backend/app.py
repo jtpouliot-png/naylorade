@@ -551,7 +551,13 @@ def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
 
     def _fetch(params):
         resp = _get(year, params)
-        if resp.status_code in (500, 404) and year == date.today().year:
+        # Fall back to previous year on error status OR non-JSON 200 (ESPN returns HTML
+        # for seasons/views that don't exist yet, e.g. before the season starts)
+        should_fallback = (
+            resp.status_code in (500, 404)
+            or (resp.status_code == 200 and not resp.text.strip().startswith("{"))
+        )
+        if should_fallback and year == date.today().year:
             resp = _get(year - 1, params)
         resp.raise_for_status()
         try:

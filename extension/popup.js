@@ -86,8 +86,10 @@ syncBtn.addEventListener("click", async () => {
     const players = await fetchESPNRoster();
     if (!players.length) throw new Error("No players found — make sure you are on your ESPN Fantasy team page.");
 
+    const espnData = await fetchESPNLeagueData(leagueId);
+
     await chrome.storage.local.set({ lastRoster: players });
-    await pushToNaylorade(players, appUrl, creds);
+    await pushToNaylorade(players, appUrl, creds, espnData);
 
     showPlayers(players, true);
     openBtn.style.display = "block";
@@ -97,6 +99,56 @@ syncBtn.addEventListener("click", async () => {
     setSyncing(false);
   }
 });
+
+// ── Fetch ESPN league data (roster + matchup) from within ESPN tab ────────────
+async function fetchESPNLeagueData(leagueId) {
+  const espnTabs = [
+    ...await chrome.tabs.query({ url: "*://fantasy.espn.com/*" }),
+    ...await chrome.tabs.query({ url: "*://www.espn.com/fantasy/*" }),
+  ];
+
+  let tabId;
+  let opened = false;
+  if (espnTabs.length) {
+    tabId = espnTabs[0].id;
+  } else {
+    const tab = await chrome.tabs.create({ url: "https://fantasy.espn.com/baseball/", active: false });
+    await waitForTabLoad(tab.id);
+    tabId = tab.id;
+    opened = true;
+  }
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: async (leagueId) => {
+      const year = new Date().getFullYear();
+      async function espnFetch(view, yr) {
+        const url = `https://fantasy.espn.com/apis/v3/games/flb/seasons/${yr}/segments/0/leagues/${leagueId}?view=${view}`;
+        try {
+          const resp = await fetch(url, { credentials: "include" });
+          const text = await resp.text();
+          return text.trim().startsWith("{") ? JSON.parse(text) : null;
+        } catch { return null; }
+      }
+      async function fetchView(view) {
+        return (await espnFetch(view, year)) || (await espnFetch(view, year - 1));
+      }
+      const [rosterData, matchupData] = await Promise.all([
+        fetchView("mRoster"),
+        fetchView("mMatchupScore"),
+      ]);
+      return { rosterData, matchupData };
+    },
+    args: [leagueId],
+  });
+
+  if (opened) chrome.tabs.remove(tabId).catch(() => {});
+
+  const data = results?.[0]?.result;
+  if (!data?.rosterData) throw new Error("Could not fetch ESPN league data — make sure you are logged into ESPN Fantasy.");
+  return data;
+}
 
 // ── Read roster from ESPN page DOM ────────────────────────────────────────────
 async function fetchESPNRoster() {
@@ -125,7 +177,7 @@ async function fetchESPNRoster() {
 }
 
 // ── Push roster into Naylorade ────────────────────────────────────────────────
-async function pushToNaylorade(players, appUrl, creds) {
+async function pushToNaylorade(players, appUrl, creds, espnData) {
   const allTabs = await chrome.tabs.query({});
   const existing = allTabs.find(t => t.url?.startsWith(appUrl));
 
@@ -140,14 +192,17 @@ async function pushToNaylorade(players, appUrl, creds) {
 
   await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: (players, creds) => {
+    func: (players, creds, espnData) => {
       localStorage.setItem("naylorade_roster", JSON.stringify(players));
       if (creds?.espnS2 && creds?.swid) {
         localStorage.setItem("naylorade_espn_creds", JSON.stringify(creds));
       }
+      if (espnData) {
+        localStorage.setItem("naylorade_espn_data", JSON.stringify({ ...espnData, swid: creds?.swid }));
+      }
       window.location.reload();
     },
-    args: [players, creds],
+    args: [players, creds, espnData || null],
   });
 }
 

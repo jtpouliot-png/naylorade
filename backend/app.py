@@ -532,70 +532,37 @@ def _percentile(vals_by_team, team_id, is_reverse):
     return round(below / (len(valid) - 1) * 100)
 
 
-def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
-    if year is None:
-        year = date.today().year
+def process_espn_matchup(roster_data, matchup_data, swid):
+    """Process pre-fetched ESPN data (fetched in-browser by extension) into matchup analytics."""
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://fantasy.espn.com/baseball/",
-        "Origin": "https://fantasy.espn.com",
-    }
-    cookies = {"espn_s2": espn_s2, "SWID": swid}
+    # scoringPeriodId and member/team info come from rosterData
+    current_period = roster_data.get("scoringPeriodId", 1)
 
-    def _get(yr, params):
-        url = f"https://fantasy.espn.com/apis/v3/games/flb/seasons/{yr}/segments/0/leagues/{league_id}"
-        return requests.get(url, params=params, cookies=cookies, headers=headers, timeout=10)
-
-    def _fetch(view_name, yr=None):
-        target_year = yr or year
-        def _get_year(y):
-            u = f"https://fantasy.espn.com/apis/v3/games/flb/seasons/{y}/segments/0/leagues/{league_id}"
-            return requests.get(u, params={"view": view_name}, cookies=cookies, headers=headers, timeout=10)
-        resp = _get_year(target_year)
-        # Fall back to previous year on error OR on HTML 200 (ESPN returns a generic
-        # HTML page for seasons/views that don't exist yet instead of a proper error)
-        if target_year == date.today().year:
-            if resp.status_code in (500, 404) or not resp.text.strip().startswith("{"):
-                print(f"ESPN {view_name} yr={target_year} status={resp.status_code} non-JSON, retrying {target_year-1}", flush=True)
-                resp = _get_year(target_year - 1)
-        resp.raise_for_status()
-        if not resp.text.strip().startswith("{"):
-            preview = resp.text[:300]
-            raise ValueError(f"ESPN returned non-JSON for view={view_name}: {preview}")
-        return resp.json()
-
-    # ── Call 1: mRoster — roster + team info + scoring period ────────────────
-    data = _fetch("mRoster")
-    print(f"ESPN mRoster keys: {list(data.keys())} scoringPeriodId={data.get('scoringPeriodId')}", flush=True)
-    current_period = data.get("scoringPeriodId", 1)
-
-    # Find user's team via SWID
     swid_clean = swid.strip("{}")
     my_team_id = None
-    for member in data.get("members", []):
+    for member in roster_data.get("members", []):
         if member.get("id", "").strip("{}") == swid_clean:
             my_team_id = member.get("onTeamId")
             break
-    if my_team_id is None and data.get("teams"):
-        my_team_id = data["teams"][0]["id"]
+    if my_team_id is None and roster_data.get("teams"):
+        my_team_id = roster_data["teams"][0]["id"]
 
-    # Team name map — pull from teams array if present, otherwise fall back to IDs
     team_map = {}
-    for t in data.get("teams", []):
+    for t in roster_data.get("teams", []):
         tid = t.get("id")
         if tid is None:
             continue
-        loc = t.get("location", "")
+        loc  = t.get("location", "")
         nick = t.get("nickname", "")
         team_map[tid] = (f"{loc} {nick}".strip()) or f"Team {tid}"
 
-    # Walk the full schedule to collect every team's current-period stats
-    all_period_stats = {}   # {team_id: {stat_id_str: {"score": ..., "result": ...}}}
+    # Matchup scoring comes from matchupData if available, fall back to rosterData
+    schedule_source = matchup_data if (matchup_data and matchup_data.get("schedule")) else roster_data
+    print(f"schedule_source keys: {list(schedule_source.keys())} schedule_len={len(schedule_source.get('schedule', []))}", flush=True)
+
+    all_period_stats = {}
     my_side = opp_side = None
-    for matchup in data.get("schedule", []):
+    for matchup in schedule_source.get("schedule", []):
         if matchup.get("matchupPeriodId") != current_period:
             continue
         for side_key in ("home", "away"):
@@ -612,24 +579,24 @@ def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
             my_side, opp_side = away, home
 
     if my_side is None:
-        return None  # bye week or preseason
+        print(f"No matchup found for team {my_team_id} in period {current_period}", flush=True)
+        return None
 
     opp_team_id = (opp_side or {}).get("teamId")
-    my_cumul    = (my_side  or {}).get("cumulativeScore") or {}
-    opp_cumul   = (opp_side or {}).get("cumulativeScore") or {}
-    my_sbs      = my_cumul.get("scoreByStat")  or {}
-    opp_sbs     = opp_cumul.get("scoreByStat") or {}
+    my_cumul  = (my_side  or {}).get("cumulativeScore") or {}
+    opp_cumul = (opp_side or {}).get("cumulativeScore") or {}
+    my_sbs    = my_cumul.get("scoreByStat")  or {}
+    opp_sbs   = opp_cumul.get("scoreByStat") or {}
 
-    # ── Season stats already in data from call 1 (mRoster) ──────────────────
-    roster_data = data
-    all_season_stats = {}  # {team_id: {stat_id: value}}
+    print(f"my_team={my_team_id} opp={opp_team_id} my_sbs_keys={list(my_sbs.keys())[:6]}", flush=True)
+
+    # Season stats from roster entries
+    all_season_stats = {}
     for team in roster_data.get("teams", []):
         tid = team.get("id")
         entries = (team.get("roster") or {}).get("entries", [])
         all_season_stats[tid] = _aggregate_roster_stats(entries)
 
-    # ── Build per-category comparison ─────────────────────────────────────────
-    # Derive categories from whatever stat IDs appear in scoreByStat — no mSettings needed
     all_stat_id_strs = set(my_sbs.keys()) | set(opp_sbs.keys())
     categories = []
     seen_abbrs = set()
@@ -637,7 +604,7 @@ def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
         stat_id = int(stat_id_str)
         info = ESPN_STAT_MAP.get(stat_id)
         if not info:
-            continue  # skip stats we don't recognise
+            continue
         abbr, name, is_reverse = info
         if abbr in seen_abbrs:
             continue
@@ -773,25 +740,18 @@ def get_news():
 @app.route("/api/matchup", methods=["POST"])
 def get_matchup():
     body = request.json or {}
-    league_id = body.get("leagueId", "").strip()
-    espn_s2   = body.get("espnS2",   "").strip()
-    swid      = body.get("swid",     "").strip()
+    roster_data  = body.get("rosterData")
+    matchup_data = body.get("matchupData")
+    swid         = body.get("swid", "").strip()
 
-    print(f"Matchup request: leagueId={league_id!r} swid_prefix={swid[:10]!r} espn_s2_len={len(espn_s2)}", flush=True)
-
-    if not all([league_id, espn_s2, swid]):
-        return jsonify({"error": "leagueId, espnS2, and swid are required"}), 400
+    if not roster_data or not swid:
+        return jsonify({"error": "rosterData and swid are required"}), 400
 
     try:
-        result = fetch_espn_matchup(league_id, espn_s2, swid)
+        result = process_espn_matchup(roster_data, matchup_data, swid)
         if result is None:
-            return jsonify({"error": "No active matchup found"}), 404
+            return jsonify({"error": "No active matchup found for this team"}), 404
         return jsonify(result)
-    except requests.HTTPError as e:
-        status = e.response.status_code if e.response else 500
-        if status == 401:
-            return jsonify({"error": "Invalid ESPN credentials"}), 401
-        return jsonify({"error": f"ESPN API error: {status}"}), status
     except Exception as e:
         import traceback
         print(f"Matchup error: {traceback.format_exc()}", flush=True)

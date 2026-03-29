@@ -36,9 +36,6 @@ export default function App() {
   const notifiedAtBat = useRef({}); // {gameId: {batter, pitcher}} — last state we notified about
 
   const [view, setView] = useState("stream");
-  const [espnCreds, setEspnCreds] = useState(() => storage("naylorade_espn_creds") || null);
-  const [credsFormOpen, setCredsFormOpen] = useState(false);
-  const [credsInput, setCredsInput] = useState(() => storage("naylorade_espn_creds") || { leagueId: "", espnS2: "", swid: "" });
   const [matchupData, setMatchupData] = useState(null);
   const [matchupLoading, setMatchupLoading] = useState(false);
   const [matchupError, setMatchupError] = useState(null);
@@ -101,12 +98,16 @@ export default function App() {
     }
   }, [loadHistoricalPlays]);
 
-  const loadMatchup = useCallback(async (creds) => {
-    if (!creds) return;
+  const loadMatchup = useCallback(async () => {
+    const espnData = storage("naylorade_espn_data");
+    if (!espnData?.rosterData || !espnData?.swid) return;
     setMatchupLoading(true);
     setMatchupError(null);
     try {
-      const data = await apiFetch("/api/matchup", { method: "POST", body: JSON.stringify(creds) });
+      const data = await apiFetch("/api/matchup", {
+        method: "POST",
+        body: JSON.stringify({ rosterData: espnData.rosterData, matchupData: espnData.matchupData, swid: espnData.swid }),
+      });
       setMatchupData(data);
     } catch (e) {
       setMatchupError(e.message);
@@ -114,16 +115,6 @@ export default function App() {
       setMatchupLoading(false);
     }
   }, []);
-
-  function saveEspnCreds() {
-    const creds = { leagueId: credsInput.leagueId.trim(), espnS2: credsInput.espnS2.trim(), swid: credsInput.swid.trim() };
-    if (!creds.leagueId || !creds.espnS2 || !creds.swid) return;
-    setEspnCreds(creds);
-    storage("naylorade_espn_creds", creds);
-    setMatchupData(null);
-    setCredsFormOpen(false);
-    loadMatchup(creds);
-  }
 
   async function requestNotifications() {
     if (typeof Notification === "undefined") return;
@@ -228,10 +219,10 @@ export default function App() {
   }, [games, roster, pollAllLive]);
 
   useEffect(() => {
-    if (view === "analytics" && espnCreds && !matchupData && !matchupLoading && !matchupError) {
-      loadMatchup(espnCreds);
+    if (view === "analytics" && !matchupData && !matchupLoading && !matchupError) {
+      loadMatchup();
     }
-  }, [view, espnCreds, matchupData, matchupLoading, matchupError, loadMatchup]);
+  }, [view, matchupData, matchupLoading, matchupError, loadMatchup]);
 
   const myGames = games.filter(g => g.fantasyPlayers?.length > 0);
   const playingCount = myGames.length;
@@ -332,23 +323,13 @@ export default function App() {
         {/* Analytics view */}
         {view === "analytics" && (
           <div style={{ height: setupOpen ? "calc(100vh - 340px)" : "calc(100vh - 57px)", overflowY: "auto" }}>
-            {credsFormOpen || !espnCreds ? (
-              <EspnCredsForm
-                input={credsInput}
-                setInput={setCredsInput}
-                onSave={saveEspnCreds}
-                onCancel={espnCreds ? () => setCredsFormOpen(false) : null}
-                hasExisting={!!espnCreds}
-              />
-            ) : (
-              <MatchupView
-                data={matchupData}
-                loading={matchupLoading}
-                error={matchupError}
-                onRefresh={() => loadMatchup(espnCreds)}
-                onEditCreds={() => setCredsFormOpen(true)}
-              />
-            )}
+            <MatchupView
+              data={matchupData}
+              loading={matchupLoading}
+              error={matchupError}
+              onRefresh={loadMatchup}
+              hasEspnData={!!storage("naylorade_espn_data")?.rosterData}
+            />
           </div>
         )}
 
@@ -578,15 +559,21 @@ function CategoryRow({ cat, isLast }) {
   );
 }
 
-function MatchupView({ data, loading, error, onRefresh, onEditCreds }) {
+function MatchupView({ data, loading, error, onRefresh, hasEspnData }) {
+  if (!hasEspnData && !data && !loading) return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "60vh", gap: 12 }}>
+      <div style={{ fontSize: 28 }}>📊</div>
+      <div style={{ fontSize: 15, fontWeight: 600 }}>Sync to see your matchup</div>
+      <div style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", maxWidth: 300, lineHeight: 1.7 }}>
+        Click <strong>Sync Roster</strong> in the Naylorade extension to load your ESPN matchup data.
+      </div>
+    </div>
+  );
   if (loading) return <div style={{ padding: 40, textAlign: "center" }}><span className="spinner" /></div>;
   if (error) return (
     <div style={{ padding: "32px 40px" }}>
       <div style={{ fontSize: 12, color: "#9b2226", marginBottom: 12 }}>⚠ {error}</div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn-primary" onClick={onRefresh}>Retry</button>
-        <button className="btn-ghost" onClick={onEditCreds}>Edit Credentials</button>
-      </div>
+      <button className="btn-primary" onClick={onRefresh}>Retry</button>
     </div>
   );
   if (!data) return (
@@ -667,46 +654,7 @@ function MatchupView({ data, loading, error, onRefresh, onEditCreds }) {
 
       <div style={{ marginTop: 14, display: "flex", gap: 8, alignItems: "center" }}>
         <button className="btn-outline" onClick={onRefresh}>Refresh</button>
-        <button className="btn-ghost" onClick={onEditCreds}>Edit Credentials</button>
         <span style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: 4 }}>wk = this week · szn = season · percentile vs league</span>
-      </div>
-    </div>
-  );
-}
-
-function EspnCredsForm({ input, setInput, onSave, onCancel, hasExisting }) {
-  const fields = [
-    { key: "leagueId", label: "League ID",      placeholder: "123456",         hint: "Found in your ESPN Fantasy URL" },
-    { key: "espnS2",   label: "espn_s2 cookie", placeholder: "AEB...",          hint: "DevTools → Application → Cookies → fantasy.espn.com" },
-    { key: "swid",     label: "SWID cookie",    placeholder: "{XXXXXXXX-...}", hint: "Include the curly braces" },
-  ];
-  const valid = input.leagueId.trim() && input.espnS2.trim() && input.swid.trim();
-  return (
-    <div style={{ padding: "32px 40px", maxWidth: 480 }}>
-      {!hasExisting && (
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>Connect ESPN Fantasy</div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
-            Enter your ESPN credentials to see this week's matchup breakdown and league percentiles.
-          </div>
-        </div>
-      )}
-      {fields.map(({ key, label, placeholder, hint }) => (
-        <div key={key} style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 500, marginBottom: 5 }}>{label}</div>
-          <input
-            type="text"
-            value={input[key]}
-            onChange={e => setInput(prev => ({ ...prev, [key]: e.target.value }))}
-            placeholder={placeholder}
-            style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border-strong)", color: "var(--text-primary)", padding: "8px 12px", fontFamily: "var(--font-mono)", fontSize: 11, outline: "none", borderRadius: 0 }}
-          />
-          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 3 }}>{hint}</div>
-        </div>
-      ))}
-      <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-        <button className="btn-primary" onClick={onSave} disabled={!valid}>{hasExisting ? "Update" : "Connect"}</button>
-        {onCancel && <button className="btn-ghost" onClick={onCancel}>Cancel</button>}
       </div>
     </div>
   );

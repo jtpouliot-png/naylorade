@@ -117,9 +117,10 @@ async function fetchESPNLeagueData(leagueId) {
 
   const tabId = espnTabs[0].id;
 
-  // Inject into isolated world (content-script context): fetch appears same-origin to ESPN
+  // Inject into MAIN world so fetch runs with the page's origin (truly same-origin to ESPN)
   const results = await chrome.scripting.executeScript({
     target: { tabId },
+    world: "MAIN",
     func: async (leagueId) => {
       const year = new Date().getFullYear();
       async function tryFetch(yr, view) {
@@ -129,24 +130,32 @@ async function fetchESPNLeagueData(leagueId) {
             { credentials: "include" }
           );
           const t = await r.text();
-          return t.trim().startsWith("{") ? JSON.parse(t) : null;
-        } catch { return null; }
+          if (t.trim().startsWith("{")) return { ok: true, data: JSON.parse(t) };
+          return { ok: false, err: `HTTP ${r.status} — non-JSON: ${t.slice(0, 120)}` };
+        } catch (e) {
+          return { ok: false, err: e.message };
+        }
       }
-      async function fetchView(view) {
-        return (await tryFetch(year, view)) || (await tryFetch(year - 1, view));
+      const r1 = await tryFetch(year, "mRoster");
+      if (r1.ok) {
+        const m1 = await tryFetch(year, "mMatchupScore");
+        const m2 = m1.ok ? m1 : await tryFetch(year - 1, "mMatchupScore");
+        return { rosterData: r1.data, matchupData: m2.ok ? m2.data : null };
       }
-      const [rosterData, matchupData] = await Promise.all([
-        fetchView("mRoster"),
-        fetchView("mMatchupScore"),
-      ]);
-      return { rosterData: rosterData || null, matchupData: matchupData || null };
+      const r2 = await tryFetch(year - 1, "mRoster");
+      if (r2.ok) {
+        const m2 = await tryFetch(year - 1, "mMatchupScore");
+        return { rosterData: r2.data, matchupData: m2.ok ? m2.data : null };
+      }
+      return { rosterData: null, matchupData: null, debug: r1.err };
     },
     args: [leagueId],
   });
 
   const data = results?.[0]?.result;
   if (!data?.rosterData) {
-    throw new Error("Could not fetch ESPN league data — make sure you are logged into ESPN Fantasy.");
+    const hint = data?.debug ? ` (${data.debug})` : "";
+    throw new Error(`Could not fetch ESPN league data — make sure you are on an ESPN Fantasy tab and logged in.${hint}`);
   }
   return data;
 }

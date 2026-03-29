@@ -100,30 +100,51 @@ syncBtn.addEventListener("click", async () => {
   }
 });
 
-// ── Fetch ESPN league data directly from popup (has host_permissions) ────────
+// ── Fetch ESPN league data by injecting into ESPN tab (same-origin fetch) ────
 async function fetchESPNLeagueData(leagueId) {
-  const year = new Date().getFullYear();
-
-  async function espnFetch(yr, view) {
-    const url = `https://fantasy.espn.com/apis/v3/games/flb/seasons/${yr}/segments/0/leagues/${leagueId}?view=${view}`;
-    try {
-      const resp = await fetch(url, { credentials: "include" });
-      const text = await resp.text();
-      return text.trim().startsWith("{") ? JSON.parse(text) : null;
-    } catch { return null; }
+  // Find an open ESPN Fantasy tab — we need one so fetch runs same-origin
+  const espnTabs = [
+    ...await chrome.tabs.query({ url: "*://fantasy.espn.com/*" }),
+    ...await chrome.tabs.query({ url: "*://www.espn.com/fantasy/*" }),
+  ];
+  if (!espnTabs.length) {
+    throw new Error("No ESPN Fantasy tab found — open fantasy.espn.com first, then try again.");
   }
 
-  async function fetchView(view) {
-    return (await espnFetch(year, view)) || (await espnFetch(year - 1, view));
+  const tabId = espnTabs[0].id;
+
+  // Inject into isolated world (content-script context): fetch appears same-origin to ESPN
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: async (leagueId) => {
+      const year = new Date().getFullYear();
+      async function tryFetch(yr, view) {
+        try {
+          const r = await fetch(
+            `https://fantasy.espn.com/apis/v3/games/flb/seasons/${yr}/segments/0/leagues/${leagueId}?view=${view}`,
+            { credentials: "include" }
+          );
+          const t = await r.text();
+          return t.trim().startsWith("{") ? JSON.parse(t) : null;
+        } catch { return null; }
+      }
+      async function fetchView(view) {
+        return (await tryFetch(year, view)) || (await tryFetch(year - 1, view));
+      }
+      const [rosterData, matchupData] = await Promise.all([
+        fetchView("mRoster"),
+        fetchView("mMatchupScore"),
+      ]);
+      return { rosterData: rosterData || null, matchupData: matchupData || null };
+    },
+    args: [leagueId],
+  });
+
+  const data = results?.[0]?.result;
+  if (!data?.rosterData) {
+    throw new Error("Could not fetch ESPN league data — make sure you are logged into ESPN Fantasy.");
   }
-
-  const [rosterData, matchupData] = await Promise.all([
-    fetchView("mRoster"),
-    fetchView("mMatchupScore"),
-  ]);
-
-  if (!rosterData) throw new Error("Could not fetch ESPN league data — make sure you are logged into ESPN Fantasy.");
-  return { rosterData, matchupData };
+  return data;
 }
 
 // ── Read roster from ESPN page DOM ────────────────────────────────────────────

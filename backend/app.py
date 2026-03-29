@@ -551,16 +551,19 @@ def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
 
     def _fetch(view_name, yr=None):
         target_year = yr or year
-        url = f"https://fantasy.espn.com/apis/v3/games/flb/seasons/{target_year}/segments/0/leagues/{league_id}"
-        params = {"view": view_name}
-        resp = requests.get(url, params=params, cookies=cookies, headers=headers, timeout=10)
-        if resp.status_code in (500, 404) and target_year == date.today().year:
-            url2 = f"https://fantasy.espn.com/apis/v3/games/flb/seasons/{target_year - 1}/segments/0/leagues/{league_id}"
-            resp = requests.get(url2, params=params, cookies=cookies, headers=headers, timeout=10)
+        def _get_year(y):
+            u = f"https://fantasy.espn.com/apis/v3/games/flb/seasons/{y}/segments/0/leagues/{league_id}"
+            return requests.get(u, params={"view": view_name}, cookies=cookies, headers=headers, timeout=10)
+        resp = _get_year(target_year)
+        # Fall back to previous year on error OR on HTML 200 (ESPN returns a generic
+        # HTML page for seasons/views that don't exist yet instead of a proper error)
+        if target_year == date.today().year:
+            if resp.status_code in (500, 404) or not resp.text.strip().startswith("{"):
+                print(f"ESPN {view_name} yr={target_year} status={resp.status_code} non-JSON, retrying {target_year-1}", flush=True)
+                resp = _get_year(target_year - 1)
         resp.raise_for_status()
         if not resp.text.strip().startswith("{"):
             preview = resp.text[:300]
-            print(f"ESPN non-JSON ({view_name}) status={resp.status_code}: {preview}", flush=True)
             raise ValueError(f"ESPN returned non-JSON for view={view_name}: {preview}")
         return resp.json()
 

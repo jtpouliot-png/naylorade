@@ -560,8 +560,8 @@ def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
             preview = resp.text[:300] if resp.text else "(empty)"
             raise ValueError(f"ESPN returned non-JSON (status {resp.status_code}): {preview}")
 
-    # ── Call 1: matchup scores + league settings ──────────────────────────────
-    data = _fetch([("view", "mSettings"), ("view", "mMatchup"), ("view", "mTeam")])
+    # ── Call 1: matchup scores ────────────────────────────────────────────────
+    data = _fetch([("view", "mMatchup"), ("view", "mTeam")])
     current_period = data.get("scoringPeriodId", 1)
 
     # Find user's team via SWID
@@ -610,12 +610,6 @@ def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
     my_sbs      = my_cumul.get("scoreByStat")  or {}
     opp_sbs     = opp_cumul.get("scoreByStat") or {}
 
-    scoring_items = (
-        data.get("settings", {})
-            .get("scoringSettings", {})
-            .get("scoringItems", [])
-    )
-
     # ── Call 2: roster stats for season percentiles ───────────────────────────
     roster_data = _fetch([("view", "mRoster")])
     all_season_stats = {}  # {team_id: {stat_id: value}}
@@ -625,20 +619,16 @@ def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
         all_season_stats[tid] = _aggregate_roster_stats(entries)
 
     # ── Build per-category comparison ─────────────────────────────────────────
-    all_stat_ids = set(my_sbs) | set(opp_sbs)
+    # Derive categories from whatever stat IDs appear in scoreByStat — no mSettings needed
+    all_stat_id_strs = set(my_sbs.keys()) | set(opp_sbs.keys())
     categories = []
     seen_abbrs = set()
-    for item in scoring_items:
-        stat_id = item.get("statId")
-        if stat_id is None:
-            continue
-        stat_id_str = str(stat_id)
-        if all_stat_ids and stat_id_str not in all_stat_ids:
-            continue
-        is_reverse = item.get("isReverseItem", False)
-        info  = ESPN_STAT_MAP.get(stat_id)
-        abbr  = info[0] if info else f"#{stat_id}"
-        name  = info[1] if info else f"Stat {stat_id}"
+    for stat_id_str in sorted(all_stat_id_strs, key=lambda x: int(x)):
+        stat_id = int(stat_id_str)
+        info = ESPN_STAT_MAP.get(stat_id)
+        if not info:
+            continue  # skip stats we don't recognise
+        abbr, name, is_reverse = info
         if abbr in seen_abbrs:
             continue
         seen_abbrs.add(abbr)

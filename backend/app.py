@@ -554,7 +554,11 @@ def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
         if resp.status_code in (500, 404) and year == date.today().year:
             resp = _get(year - 1, params)
         resp.raise_for_status()
-        return resp.json()
+        try:
+            return resp.json()
+        except ValueError:
+            preview = resp.text[:300] if resp.text else "(empty)"
+            raise ValueError(f"ESPN returned non-JSON (status {resp.status_code}): {preview}")
 
     # ── Call 1: matchup scores + league settings ──────────────────────────────
     data = _fetch([("view", "mSettings"), ("view", "mMatchup"), ("view", "mMatchupScore"), ("view", "mTeam")])

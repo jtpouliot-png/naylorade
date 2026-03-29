@@ -567,8 +567,14 @@ def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
             print(f"ESPN non-JSON response. URL: {resp.url} Status: {resp.status_code}\n{preview}", flush=True)
             raise ValueError(f"ESPN returned non-JSON (status {resp.status_code}): {preview}")
 
-    # ── Call 1: matchup scores ────────────────────────────────────────────────
-    data = _fetch([("view", "mScoreboard")])
+    # ── Call 1: diagnostic — use mRoster to confirm creds work, log keys ────
+    data = _fetch([("view", "mRoster")])
+    print(f"ESPN mRoster top-level keys: {list(data.keys())}", flush=True)
+    if "schedule" in data:
+        s = data["schedule"]
+        print(f"schedule length: {len(s)}, first item keys: {list(s[0].keys()) if s else 'empty'}", flush=True)
+    else:
+        print("No 'schedule' key in mRoster response", flush=True)
     current_period = data.get("scoringPeriodId", 1)
 
     # Find user's team via SWID

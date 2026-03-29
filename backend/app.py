@@ -561,7 +561,7 @@ def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
             raise ValueError(f"ESPN returned non-JSON (status {resp.status_code}): {preview}")
 
     # ── Call 1: matchup scores + league settings ──────────────────────────────
-    data = _fetch([("view", "mSettings"), ("view", "mMatchup"), ("view", "mMatchupScore"), ("view", "mTeam")])
+    data = _fetch([("view", "mSettings"), ("view", "mMatchup"), ("view", "mTeam")])
     current_period = data.get("scoringPeriodId", 1)
 
     # Find user's team via SWID

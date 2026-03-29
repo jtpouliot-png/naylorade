@@ -35,6 +35,14 @@ export default function App() {
   const seenPlays = useRef(new Set());
   const notifiedAtBat = useRef({}); // {gameId: {batter, pitcher}} — last state we notified about
 
+  const [view, setView] = useState("stream");
+  const [espnCreds, setEspnCreds] = useState(() => storage("naylorade_espn_creds") || null);
+  const [credsFormOpen, setCredsFormOpen] = useState(false);
+  const [credsInput, setCredsInput] = useState(() => storage("naylorade_espn_creds") || { leagueId: "", espnS2: "", swid: "" });
+  const [matchupData, setMatchupData] = useState(null);
+  const [matchupLoading, setMatchupLoading] = useState(false);
+  const [matchupError, setMatchupError] = useState(null);
+
   const loadHistoricalPlays = useCallback(async (currentGames, currentRoster) => {
     const relevantGames = currentGames.filter(g => g.status === "Live" || g.status === "Final");
     if (!relevantGames.length) return;
@@ -92,6 +100,30 @@ export default function App() {
       setGamesLoading(false);
     }
   }, [loadHistoricalPlays]);
+
+  const loadMatchup = useCallback(async (creds) => {
+    if (!creds) return;
+    setMatchupLoading(true);
+    setMatchupError(null);
+    try {
+      const data = await apiFetch("/api/matchup", { method: "POST", body: JSON.stringify(creds) });
+      setMatchupData(data);
+    } catch (e) {
+      setMatchupError(e.message);
+    } finally {
+      setMatchupLoading(false);
+    }
+  }, []);
+
+  function saveEspnCreds() {
+    const creds = { leagueId: credsInput.leagueId.trim(), espnS2: credsInput.espnS2.trim(), swid: credsInput.swid.trim() };
+    if (!creds.leagueId || !creds.espnS2 || !creds.swid) return;
+    setEspnCreds(creds);
+    storage("naylorade_espn_creds", creds);
+    setMatchupData(null);
+    setCredsFormOpen(false);
+    loadMatchup(creds);
+  }
 
   async function requestNotifications() {
     if (typeof Notification === "undefined") return;
@@ -195,6 +227,12 @@ export default function App() {
     return () => clearInterval(interval);
   }, [games, roster, pollAllLive]);
 
+  useEffect(() => {
+    if (view === "analytics" && espnCreds && !matchupData && !matchupLoading) {
+      loadMatchup(espnCreds);
+    }
+  }, [view, espnCreds, matchupData, matchupLoading, loadMatchup]);
+
   const myGames = games.filter(g => g.fantasyPlayers?.length > 0);
   const playingCount = myGames.length;
 
@@ -239,8 +277,13 @@ export default function App() {
             <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-0.02em" }}>Naylorade</span>
             <span style={{ fontSize: 10, color: "var(--text-muted)", letterSpacing: "0.06em", textTransform: "uppercase" }}>Stream Guide</span>
           </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-            {new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+          <div style={{ display: "flex", gap: 2, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, padding: 2 }}>
+            {[["stream", "Stream"], ["analytics", "Matchup"]].map(([v, label]) => (
+              <button key={v} onClick={() => setView(v)}
+                style={{ background: view === v ? "var(--surface)" : "transparent", border: "none", padding: "4px 14px", fontSize: 11, fontWeight: view === v ? 600 : 400, color: view === v ? "var(--text-primary)" : "var(--text-muted)", cursor: "pointer", fontFamily: "var(--font-sans)", borderRadius: 3, transition: "all 0.15s" }}>
+                {label}
+              </button>
+            ))}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {roster.length > 0 && (
@@ -276,8 +319,8 @@ export default function App() {
           </div>
         )}
 
-        {/* Empty state */}
-        {!roster.length && !setupOpen && (
+        {/* Empty state — stream only */}
+        {!roster.length && !setupOpen && view === "stream" && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "calc(100vh - 57px)", gap: 14 }}>
             <div style={{ fontSize: 32 }}>⚾</div>
             <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.01em" }}>Add your fantasy roster</div>
@@ -286,8 +329,31 @@ export default function App() {
           </div>
         )}
 
+        {/* Analytics view */}
+        {view === "analytics" && (
+          <div style={{ height: setupOpen ? "calc(100vh - 340px)" : "calc(100vh - 57px)", overflowY: "auto" }}>
+            {credsFormOpen || !espnCreds ? (
+              <EspnCredsForm
+                input={credsInput}
+                setInput={setCredsInput}
+                onSave={saveEspnCreds}
+                onCancel={espnCreds ? () => setCredsFormOpen(false) : null}
+                hasExisting={!!espnCreds}
+              />
+            ) : (
+              <MatchupView
+                data={matchupData}
+                loading={matchupLoading}
+                error={matchupError}
+                onRefresh={() => loadMatchup(espnCreds)}
+                onEditCreds={() => setCredsFormOpen(true)}
+              />
+            )}
+          </div>
+        )}
+
         {/* Main 3-panel layout */}
-        {roster.length > 0 && (
+        {roster.length > 0 && view === "stream" && (
           <div style={{ display: "flex", height: setupOpen ? "calc(100vh - 340px)" : "calc(100vh - 57px)", overflow: "hidden" }}>
 
             {/* Panel 1: My Games (filtered) */}
@@ -441,6 +507,212 @@ function GameCard({ game }) {
     </div>
   );
 }
+
+// ── Analytics components ───────────────────────────────────────────────────
+
+function pctColor(pct) {
+  if (pct == null) return "var(--text-muted)";
+  if (pct >= 67) return "#2d6a4f";
+  if (pct >= 34) return "#856404";
+  return "#9b2226";
+}
+
+function pctLabel(pct) {
+  if (pct == null) return "–";
+  const s = pct === 1 ? "st" : pct === 2 ? "nd" : pct === 3 ? "rd" : "th";
+  return `${pct}${s}`;
+}
+
+function formatStatScore(abbr, score) {
+  if (score == null) return "–";
+  if (["AVG", "OBP", "SLG", "OPS"].includes(abbr)) return score.toFixed(3);
+  if (["ERA", "WHIP"].includes(abbr)) return score.toFixed(2);
+  if (["IP", "K/9"].includes(abbr)) return score.toFixed(1);
+  return Math.round(score).toString();
+}
+
+function PctBadge({ pct, label }) {
+  return (
+    <div style={{ fontSize: 10, marginTop: 2, display: "flex", alignItems: "center", gap: 3 }}>
+      <span style={{ color: pctColor(pct), fontWeight: 500 }}>{pctLabel(pct)}</span>
+      <span style={{ color: "var(--text-muted)" }}>{label}</span>
+    </div>
+  );
+}
+
+function CategoryRow({ cat, isLast }) {
+  const isWin  = cat.result === "WIN";
+  const isLoss = cat.result === "LOSS";
+  return (
+    <div style={{
+      display: "grid", gridTemplateColumns: "130px 1fr 44px 1fr",
+      padding: "11px 16px",
+      borderBottom: isLast ? "none" : "1px solid var(--border)",
+      background: isLoss ? "#fff8f8" : "var(--surface)",
+      alignItems: "start",
+    }}>
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 600 }}>{cat.abbr}</div>
+        <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 1 }}>{cat.name}</div>
+      </div>
+      <div style={{ textAlign: "right", paddingRight: 10 }}>
+        <div style={{ fontSize: 15, fontWeight: isWin ? 700 : 400 }}>{formatStatScore(cat.abbr, cat.myScore)}</div>
+        <PctBadge pct={cat.myPercentile}  label="wk"  />
+        <PctBadge pct={cat.mySeasonPct}   label="szn" />
+      </div>
+      <div style={{ textAlign: "center", paddingTop: 1 }}>
+        <span style={{
+          fontSize: 9, fontWeight: 700, padding: "2px 5px", borderRadius: 3, letterSpacing: "0.05em",
+          background: isWin ? "#d4edda" : isLoss ? "#f8d7da" : "#f0eeeb",
+          color:      isWin ? "#155724" : isLoss ? "#721c24" : "var(--text-muted)",
+        }}>
+          {cat.result === "WIN" ? "W" : cat.result === "LOSS" ? "L" : "T"}
+        </span>
+      </div>
+      <div style={{ paddingLeft: 10 }}>
+        <div style={{ fontSize: 15, fontWeight: isLoss ? 700 : 400 }}>{formatStatScore(cat.abbr, cat.oppScore)}</div>
+        <PctBadge pct={cat.oppPercentile} label="wk"  />
+        <PctBadge pct={cat.oppSeasonPct}  label="szn" />
+      </div>
+    </div>
+  );
+}
+
+function MatchupView({ data, loading, error, onRefresh, onEditCreds }) {
+  if (loading) return <div style={{ padding: 40, textAlign: "center" }}><span className="spinner" /></div>;
+  if (error) return (
+    <div style={{ padding: "32px 40px" }}>
+      <div style={{ fontSize: 12, color: "#9b2226", marginBottom: 12 }}>⚠ {error}</div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="btn-primary" onClick={onRefresh}>Retry</button>
+        <button className="btn-ghost" onClick={onEditCreds}>Edit Credentials</button>
+      </div>
+    </div>
+  );
+  if (!data) return (
+    <div style={{ padding: "32px 40px" }}>
+      <button className="btn-primary" onClick={onRefresh}>Load Matchup</button>
+    </div>
+  );
+
+  const { myTeam, opponent, record, categories, scoringPeriodId } = data;
+  const { wins = 0, losses = 0, ties = 0 } = record;
+  const isWinning = wins > losses, isLosing = losses > wins;
+
+  const grouped = {
+    LOSS: categories.filter(c => c.result === "LOSS"),
+    TIE:  categories.filter(c => c.result === "TIE"),
+    WIN:  categories.filter(c => c.result === "WIN"),
+  };
+
+  const sections = [
+    { label: "Need to improve", cats: grouped.LOSS, accent: "#9b2226" },
+    { label: "Too close to call", cats: grouped.TIE,  accent: "var(--text-muted)" },
+    { label: "Winning",          cats: grouped.WIN,  accent: "#2d6a4f" },
+  ].filter(s => s.cats.length > 0);
+
+  return (
+    <div style={{ padding: "24px 32px", maxWidth: 680 }}>
+      {/* Header */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 6 }}>
+          Week {scoringPeriodId}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <span style={{ fontSize: 18, fontWeight: 700 }}>{myTeam.name}</span>
+          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>vs</span>
+          <span style={{ fontSize: 18, fontWeight: 700, color: "var(--text-secondary)" }}>{opponent.name}</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{
+            fontSize: 13, fontWeight: 700, padding: "4px 12px", borderRadius: 4,
+            background: isWinning ? "#d4edda" : isLosing ? "#f8d7da" : "#f0eeeb",
+            color:      isWinning ? "#155724" : isLosing ? "#721c24" : "var(--text-secondary)",
+          }}>
+            {wins}–{losses}{ties > 0 ? `–${ties}` : ""}
+          </span>
+          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            {isWinning ? `Leading · ${losses} ${losses === 1 ? "category" : "categories"} to improve`
+             : isLosing ? `Trailing · ${losses} ${losses === 1 ? "category" : "categories"} to close`
+             : "Tied"}
+          </span>
+        </div>
+      </div>
+
+      {/* Column headers */}
+      <div style={{ display: "grid", gridTemplateColumns: "130px 1fr 44px 1fr", padding: "6px 16px", background: "var(--bg)", border: "1px solid var(--border)", borderBottom: "none", borderRadius: "4px 4px 0 0" }}>
+        <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)" }}>Category</div>
+        <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)", textAlign: "right", paddingRight: 10 }}>
+          {myTeam.name.split(" ").slice(-1)[0]}
+        </div>
+        <div />
+        <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)", paddingLeft: 10 }}>
+          {opponent.name.split(" ").slice(-1)[0]}
+        </div>
+      </div>
+
+      {/* Category sections */}
+      <div style={{ border: "1px solid var(--border)", borderRadius: "0 0 4px 4px", overflow: "hidden" }}>
+        {sections.map((section, si) => (
+          <div key={section.label}>
+            <div style={{ padding: "6px 16px", background: "var(--bg)", borderTop: si > 0 ? "1px solid var(--border)" : "none", fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: section.accent }}>
+              {section.label}
+            </div>
+            {section.cats.map((cat, i) => (
+              <CategoryRow key={cat.statId} cat={cat} isLast={i === section.cats.length - 1 && si === sections.length - 1} />
+            ))}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 14, display: "flex", gap: 8, alignItems: "center" }}>
+        <button className="btn-outline" onClick={onRefresh}>Refresh</button>
+        <button className="btn-ghost" onClick={onEditCreds}>Edit Credentials</button>
+        <span style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: 4 }}>wk = this week · szn = season · percentile vs league</span>
+      </div>
+    </div>
+  );
+}
+
+function EspnCredsForm({ input, setInput, onSave, onCancel, hasExisting }) {
+  const fields = [
+    { key: "leagueId", label: "League ID",      placeholder: "123456",         hint: "Found in your ESPN Fantasy URL" },
+    { key: "espnS2",   label: "espn_s2 cookie", placeholder: "AEB...",          hint: "DevTools → Application → Cookies → fantasy.espn.com" },
+    { key: "swid",     label: "SWID cookie",    placeholder: "{XXXXXXXX-...}", hint: "Include the curly braces" },
+  ];
+  const valid = input.leagueId.trim() && input.espnS2.trim() && input.swid.trim();
+  return (
+    <div style={{ padding: "32px 40px", maxWidth: 480 }}>
+      {!hasExisting && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>Connect ESPN Fantasy</div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 }}>
+            Enter your ESPN credentials to see this week's matchup breakdown and league percentiles.
+          </div>
+        </div>
+      )}
+      {fields.map(({ key, label, placeholder, hint }) => (
+        <div key={key} style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 500, marginBottom: 5 }}>{label}</div>
+          <input
+            type="text"
+            value={input[key]}
+            onChange={e => setInput(prev => ({ ...prev, [key]: e.target.value }))}
+            placeholder={placeholder}
+            style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border-strong)", color: "var(--text-primary)", padding: "8px 12px", fontFamily: "var(--font-mono)", fontSize: 11, outline: "none", borderRadius: 0 }}
+          />
+          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 3 }}>{hint}</div>
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+        <button className="btn-primary" onClick={onSave} disabled={!valid}>{hasExisting ? "Update" : "Connect"}</button>
+        {onCancel && <button className="btn-ghost" onClick={onCancel}>Cancel</button>}
+      </div>
+    </div>
+  );
+}
+
+// ── Game board components ──────────────────────────────────────────────────
 
 function AllGamesBoard({ games, liveData, newsData }) {
   if (!games.length) {

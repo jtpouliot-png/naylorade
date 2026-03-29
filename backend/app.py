@@ -445,6 +445,235 @@ def fetch_player_news(player_name):
     return results
 
 
+# ── ESPN matchup ──────────────────────────────────────────────────────────────
+
+ESPN_STAT_MAP = {
+    0:  ("AB",   "At Bats",          False),
+    1:  ("H",    "Hits",             False),
+    2:  ("AVG",  "Batting Avg",      False),
+    3:  ("OBP",  "On-Base %",        False),
+    4:  ("SLG",  "Slugging %",       False),
+    5:  ("HR",   "Home Runs",        False),
+    6:  ("R",    "Runs",             False),
+    7:  ("RBI",  "RBIs",             False),
+    8:  ("BB",   "Walks",            False),
+    10: ("SO",   "K (Batter)",       True),
+    11: ("SB",   "Stolen Bases",     False),
+    12: ("CS",   "Caught Stealing",  True),
+    14: ("OPS",  "OPS",              False),
+    17: ("OPS",  "OPS",              False),
+    20: ("R",    "Runs",             False),
+    21: ("RBI",  "RBIs",             False),
+    23: ("SB",   "Stolen Bases",     False),
+    34: ("IP",   "Innings Pitched",  False),
+    37: ("HA",   "Hits Allowed",     True),
+    38: ("ER",   "Earned Runs",      True),
+    39: ("BBA",  "BB Allowed",       True),
+    41: ("WHIP", "WHIP",             True),
+    45: ("W",    "Wins",             False),
+    46: ("L",    "Losses",           True),
+    47: ("ERA",  "ERA",              True),
+    48: ("K",    "Strikeouts",       False),
+    53: ("W",    "Wins",             False),
+    54: ("L",    "Losses",           True),
+    57: ("SV",   "Saves",            False),
+    62: ("K/9",  "K per 9",          False),
+    63: ("QS",   "Quality Starts",   False),
+    64: ("ER",   "Earned Runs",      True),
+    72: ("HLD",  "Holds",            False),
+    74: ("NSV",  "Saves+Holds",      False),
+}
+
+# Rate stats computed from component counting stats (stat IDs)
+RATE_STAT_COMPONENTS = {
+    2:  {"num": [1],      "den": [0],  "mult": 1},   # AVG  = H / AB
+    41: {"num": [37, 39], "den": [34], "mult": 1},   # WHIP = (HA + BBA) / IP
+    47: {"num": [38],     "den": [34], "mult": 9},   # ERA  = (ER / IP) × 9
+}
+
+
+def _aggregate_roster_stats(entries):
+    """Sum full-season stats (statSplitTypeId=0) for all players in a roster."""
+    raw = {}
+    for entry in entries:
+        pool = entry.get("playerPoolEntry") or {}
+        stats_list = (pool.get("player") or {}).get("stats") or []
+        for stat_entry in stats_list:
+            if stat_entry.get("statSplitTypeId") != 0:
+                continue
+            for sid_str, val in (stat_entry.get("stats") or {}).items():
+                try:
+                    sid = int(sid_str)
+                    raw[sid] = raw.get(sid, 0) + (val or 0)
+                except (ValueError, TypeError):
+                    pass
+            break  # one season-split entry per player is enough
+
+    result = dict(raw)
+    for stat_id, defn in RATE_STAT_COMPONENTS.items():
+        num_total = sum(raw.get(sid, 0) for sid in defn["num"])
+        den_total = sum(raw.get(sid, 0) for sid in defn["den"])
+        result[stat_id] = (num_total / den_total * defn["mult"]) if den_total > 0 else None
+    return result
+
+
+def _percentile(vals_by_team, team_id, is_reverse):
+    """Return league percentile (0–100) for a team in a given stat. None if insufficient data."""
+    valid = [(tid, v) for tid, v in vals_by_team.items() if v is not None]
+    if len(valid) < 2:
+        return None
+    my_val = vals_by_team.get(team_id)
+    if my_val is None:
+        return None
+    if is_reverse:
+        below = sum(1 for _, v in valid if v > my_val)
+    else:
+        below = sum(1 for _, v in valid if v < my_val)
+    return round(below / (len(valid) - 1) * 100)
+
+
+def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
+    if year is None:
+        year = date.today().year
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://fantasy.espn.com/baseball/",
+        "Origin": "https://fantasy.espn.com",
+    }
+    cookies = {"espn_s2": espn_s2, "SWID": swid}
+
+    def _get(yr, params):
+        url = f"https://fantasy.espn.com/apis/v3/games/flb/seasons/{yr}/segments/0/leagues/{league_id}"
+        return requests.get(url, params=params, cookies=cookies, headers=headers, timeout=10)
+
+    def _fetch(params):
+        resp = _get(year, params)
+        if resp.status_code in (500, 404) and year == date.today().year:
+            resp = _get(year - 1, params)
+        resp.raise_for_status()
+        return resp.json()
+
+    # ── Call 1: matchup scores + league settings ──────────────────────────────
+    data = _fetch([("view", "mSettings"), ("view", "mMatchup"), ("view", "mMatchupScore"), ("view", "mTeam")])
+    current_period = data.get("scoringPeriodId", 1)
+
+    # Find user's team via SWID
+    swid_clean = swid.strip("{}")
+    my_team_id = None
+    for member in data.get("members", []):
+        if member.get("id", "").strip("{}") == swid_clean:
+            my_team_id = member.get("onTeamId")
+            break
+    if my_team_id is None and data.get("teams"):
+        my_team_id = data["teams"][0]["id"]
+
+    # Team name map
+    team_map = {}
+    for t in data.get("teams", []):
+        tid = t["id"]
+        loc = t.get("location", "")
+        nick = t.get("nickname", "")
+        team_map[tid] = (f"{loc} {nick}".strip()) or f"Team {tid}"
+
+    # Walk the full schedule to collect every team's current-period stats
+    all_period_stats = {}   # {team_id: {stat_id_str: {"score": ..., "result": ...}}}
+    my_side = opp_side = None
+    for matchup in data.get("schedule", []):
+        if matchup.get("matchupPeriodId") != current_period:
+            continue
+        for side_key in ("home", "away"):
+            side = matchup.get(side_key) or {}
+            tid = side.get("teamId")
+            if tid:
+                sbs = (side.get("cumulativeScore") or {}).get("scoreByStat") or {}
+                all_period_stats[tid] = sbs
+        home = matchup.get("home") or {}
+        away = matchup.get("away") or {}
+        if home.get("teamId") == my_team_id:
+            my_side, opp_side = home, away
+        elif away.get("teamId") == my_team_id:
+            my_side, opp_side = away, home
+
+    if my_side is None:
+        return None  # bye week or preseason
+
+    opp_team_id = (opp_side or {}).get("teamId")
+    my_cumul    = (my_side  or {}).get("cumulativeScore") or {}
+    opp_cumul   = (opp_side or {}).get("cumulativeScore") or {}
+    my_sbs      = my_cumul.get("scoreByStat")  or {}
+    opp_sbs     = opp_cumul.get("scoreByStat") or {}
+
+    scoring_items = (
+        data.get("settings", {})
+            .get("scoringSettings", {})
+            .get("scoringItems", [])
+    )
+
+    # ── Call 2: roster stats for season percentiles ───────────────────────────
+    roster_data = _fetch([("view", "mRoster")])
+    all_season_stats = {}  # {team_id: {stat_id: value}}
+    for team in roster_data.get("teams", []):
+        tid = team.get("id")
+        entries = (team.get("roster") or {}).get("entries", [])
+        all_season_stats[tid] = _aggregate_roster_stats(entries)
+
+    # ── Build per-category comparison ─────────────────────────────────────────
+    all_stat_ids = set(my_sbs) | set(opp_sbs)
+    categories = []
+    seen_abbrs = set()
+    for item in scoring_items:
+        stat_id = item.get("statId")
+        if stat_id is None:
+            continue
+        stat_id_str = str(stat_id)
+        if all_stat_ids and stat_id_str not in all_stat_ids:
+            continue
+        is_reverse = item.get("isReverseItem", False)
+        info  = ESPN_STAT_MAP.get(stat_id)
+        abbr  = info[0] if info else f"#{stat_id}"
+        name  = info[1] if info else f"Stat {stat_id}"
+        if abbr in seen_abbrs:
+            continue
+        seen_abbrs.add(abbr)
+
+        my_stat  = my_sbs.get(stat_id_str)  or {}
+        opp_stat = opp_sbs.get(stat_id_str) or {}
+
+        period_vals = {
+            tid: (stats.get(stat_id_str) or {}).get("score")
+            for tid, stats in all_period_stats.items()
+        }
+        season_vals = {
+            tid: stats.get(stat_id)
+            for tid, stats in all_season_stats.items()
+        }
+
+        categories.append({
+            "statId":        stat_id,
+            "abbr":          abbr,
+            "name":          name,
+            "isReverseItem": is_reverse,
+            "myScore":       my_stat.get("score"),
+            "oppScore":      opp_stat.get("score"),
+            "result":        my_stat.get("result", "TIE"),
+            "myPercentile":  _percentile(period_vals, my_team_id,  is_reverse),
+            "oppPercentile": _percentile(period_vals, opp_team_id, is_reverse),
+            "mySeasonPct":   _percentile(season_vals, my_team_id,  is_reverse),
+            "oppSeasonPct":  _percentile(season_vals, opp_team_id, is_reverse),
+        })
+
+    return {
+        "myTeam":          {"id": my_team_id,  "name": team_map.get(my_team_id,  "My Team")},
+        "opponent":        {"id": opp_team_id, "name": team_map.get(opp_team_id, "Opponent")},
+        "record":          {"wins": my_cumul.get("wins", 0), "losses": my_cumul.get("losses", 0), "ties": my_cumul.get("ties", 0)},
+        "categories":      categories,
+        "scoringPeriodId": current_period,
+    }
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/api/roster", methods=["POST"])
@@ -535,6 +764,32 @@ def get_news():
     for player in players[:20]:
         result[player] = fetch_player_news(player)
     return jsonify({"news": result})
+
+
+@app.route("/api/matchup", methods=["POST"])
+def get_matchup():
+    body = request.json or {}
+    league_id = body.get("leagueId", "").strip()
+    espn_s2   = body.get("espnS2",   "").strip()
+    swid      = body.get("swid",     "").strip()
+
+    if not all([league_id, espn_s2, swid]):
+        return jsonify({"error": "leagueId, espnS2, and swid are required"}), 400
+
+    try:
+        result = fetch_espn_matchup(league_id, espn_s2, swid)
+        if result is None:
+            return jsonify({"error": "No active matchup found"}), 404
+        return jsonify(result)
+    except requests.HTTPError as e:
+        status = e.response.status_code if e.response else 500
+        if status == 401:
+            return jsonify({"error": "Invalid ESPN credentials"}), 401
+        return jsonify({"error": f"ESPN API error: {status}"}), status
+    except Exception as e:
+        import traceback
+        print(f"Matchup error: {traceback.format_exc()}", flush=True)
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/health", methods=["GET"])

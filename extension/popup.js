@@ -33,16 +33,20 @@ async function init() {
 // ── ESPN cookies ──────────────────────────────────────────────────────────────
 async function checkESPNCookies() {
   try {
-    const [s2, swid] = await Promise.all([
-      chrome.cookies.get({ url: "https://www.espn.com", name: "espn_s2" }),
-      chrome.cookies.get({ url: "https://www.espn.com", name: "SWID" }),
-    ]);
-    hasESPNCookies = !!(s2 && swid);
-    if (hasESPNCookies) {
-      espnStatus.innerHTML = `<div class="dot green"></div><span>Logged in — cookies found</span>`;
-    } else {
-      espnStatus.innerHTML = `<div class="dot red"></div><span>Not logged in — <a href="https://www.espn.com/fantasy/baseball" target="_blank" style="color:#1a1917">open ESPN Fantasy</a> first</span>`;
+    const urls = ["https://fantasy.espn.com", "https://www.espn.com"];
+    for (const url of urls) {
+      const [s2, swid] = await Promise.all([
+        chrome.cookies.get({ url, name: "espn_s2" }),
+        chrome.cookies.get({ url, name: "SWID" }),
+      ]);
+      if (s2 && swid) {
+        hasESPNCookies = true;
+        espnStatus.innerHTML = `<div class="dot green"></div><span>Logged in — cookies found</span>`;
+        return;
+      }
     }
+    hasESPNCookies = false;
+    espnStatus.innerHTML = `<div class="dot red"></div><span>Not logged in — <a href="https://fantasy.espn.com/baseball" target="_blank" style="color:#1a1917">open ESPN Fantasy</a> first</span>`;
   } catch {
     espnStatus.innerHTML = `<div class="dot red"></div><span>Could not read cookies</span>`;
   }

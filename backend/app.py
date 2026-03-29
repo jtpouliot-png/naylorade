@@ -567,8 +567,16 @@ def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
             print(f"ESPN non-JSON response. URL: {resp.url} Status: {resp.status_code}\n{preview}", flush=True)
             raise ValueError(f"ESPN returned non-JSON (status {resp.status_code}): {preview}")
 
+    # ── Call 1: probe bare request to discover available keys ────────────────
+    probe = _fetch([])
+    print(f"ESPN bare response keys: {list(probe.keys())}", flush=True)
+    print(f"scoringPeriodId: {probe.get('scoringPeriodId')}", flush=True)
+    if probe.get("schedule"):
+        first = probe["schedule"][0]
+        print(f"schedule[0] keys: {list(first.keys())}", flush=True)
+
     # ── Call 1: matchup scores ────────────────────────────────────────────────
-    data = _fetch([("view", "mMatchup")])
+    data = _fetch([("view", "mLiveScoring"), ("view", "mMatchupScore")])
     current_period = data.get("scoringPeriodId", 1)
 
     # Find user's team via SWID

@@ -549,32 +549,24 @@ def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
         url = f"https://fantasy.espn.com/apis/v3/games/flb/seasons/{yr}/segments/0/leagues/{league_id}"
         return requests.get(url, params=params, cookies=cookies, headers=headers, timeout=10)
 
-    def _fetch(params):
-        resp = _get(year, params)
-        # Fall back to previous year on error status OR non-JSON 200 (ESPN returns HTML
-        # for seasons/views that don't exist yet, e.g. before the season starts)
-        should_fallback = (
-            resp.status_code in (500, 404)
-            or (resp.status_code == 200 and not resp.text.strip().startswith("{"))
-        )
-        if should_fallback and year == date.today().year:
-            resp = _get(year - 1, params)
+    def _fetch(view_name, yr=None):
+        target_year = yr or year
+        url = f"https://fantasy.espn.com/apis/v3/games/flb/seasons/{target_year}/segments/0/leagues/{league_id}"
+        params = {"view": view_name}
+        resp = requests.get(url, params=params, cookies=cookies, headers=headers, timeout=10)
+        if resp.status_code in (500, 404) and target_year == date.today().year:
+            url2 = f"https://fantasy.espn.com/apis/v3/games/flb/seasons/{target_year - 1}/segments/0/leagues/{league_id}"
+            resp = requests.get(url2, params=params, cookies=cookies, headers=headers, timeout=10)
         resp.raise_for_status()
-        try:
-            return resp.json()
-        except ValueError:
-            preview = resp.text[:500] if resp.text else "(empty)"
-            print(f"ESPN non-JSON response. URL: {resp.url} Status: {resp.status_code}\n{preview}", flush=True)
-            raise ValueError(f"ESPN returned non-JSON (status {resp.status_code}): {preview}")
+        if not resp.text.strip().startswith("{"):
+            preview = resp.text[:300]
+            print(f"ESPN non-JSON ({view_name}) status={resp.status_code}: {preview}", flush=True)
+            raise ValueError(f"ESPN returned non-JSON for view={view_name}: {preview}")
+        return resp.json()
 
-    # ── Call 1: diagnostic — use mRoster to confirm creds work, log keys ────
-    data = _fetch([("view", "mRoster")])
-    print(f"ESPN mRoster top-level keys: {list(data.keys())}", flush=True)
-    if "schedule" in data:
-        s = data["schedule"]
-        print(f"schedule length: {len(s)}, first item keys: {list(s[0].keys()) if s else 'empty'}", flush=True)
-    else:
-        print("No 'schedule' key in mRoster response", flush=True)
+    # ── Call 1: mRoster — roster + team info + scoring period ────────────────
+    data = _fetch("mRoster")
+    print(f"ESPN mRoster keys: {list(data.keys())} scoringPeriodId={data.get('scoringPeriodId')}", flush=True)
     current_period = data.get("scoringPeriodId", 1)
 
     # Find user's team via SWID
@@ -625,8 +617,8 @@ def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
     my_sbs      = my_cumul.get("scoreByStat")  or {}
     opp_sbs     = opp_cumul.get("scoreByStat") or {}
 
-    # ── Call 2: roster stats for season percentiles ───────────────────────────
-    roster_data = _fetch([("view", "mRoster")])
+    # ── Season stats already in data from call 1 (mRoster) ──────────────────
+    roster_data = data
     all_season_stats = {}  # {team_id: {stat_id: value}}
     for team in roster_data.get("teams", []):
         tid = team.get("id")

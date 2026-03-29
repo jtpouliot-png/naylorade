@@ -782,6 +782,8 @@ def get_matchup():
     espn_s2   = body.get("espnS2",   "").strip()
     swid      = body.get("swid",     "").strip()
 
+    print(f"Matchup request: leagueId={league_id!r} swid_prefix={swid[:10]!r} espn_s2_len={len(espn_s2)}", flush=True)
+
     if not all([league_id, espn_s2, swid]):
         return jsonify({"error": "leagueId, espnS2, and swid are required"}), 400
 

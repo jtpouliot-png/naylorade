@@ -83,10 +83,15 @@ syncBtn.addEventListener("click", async () => {
   setSyncing(true);
 
   try {
-    const [s2Cookie, swidCookie] = await Promise.all([
-      chrome.cookies.get({ url: "https://www.espn.com", name: "espn_s2" }),
-      chrome.cookies.get({ url: "https://www.espn.com", name: "SWID" }),
-    ]);
+    const cookieUrls = ["https://fantasy.espn.com", "https://www.espn.com"];
+    let s2Cookie, swidCookie;
+    for (const u of cookieUrls) {
+      const [a, b] = await Promise.all([
+        chrome.cookies.get({ url: u, name: "espn_s2" }),
+        chrome.cookies.get({ url: u, name: "SWID" }),
+      ]);
+      if (a && b) { s2Cookie = a; swidCookie = b; break; }
+    }
     const creds = { leagueId, espnS2: s2Cookie?.value || "", swid: swidCookie?.value || "" };
 
     const players = await fetchESPNRoster();
@@ -106,58 +111,53 @@ syncBtn.addEventListener("click", async () => {
   }
 });
 
-// ── Fetch ESPN league data by injecting into ESPN tab (same-origin fetch) ────
+// ── Fetch ESPN league data via tab navigation (bypasses fetch/CORS issues) ────
 async function fetchESPNLeagueData(leagueId) {
-  // Must use a fantasy.espn.com tab — fetching fantasy.espn.com API from www.espn.com is cross-origin and fails
   const allTabs = await chrome.tabs.query({});
   const espnTabs = allTabs.filter(t => t.url?.includes("fantasy.espn.com"));
   if (!espnTabs.length) {
-    throw new Error("No fantasy.espn.com tab found — open fantasy.espn.com in a tab first, then try again.");
+    throw new Error("No fantasy.espn.com tab found — open fantasy.espn.com first, then try again.");
   }
 
   const tabId = espnTabs[0].id;
+  const originalUrl = espnTabs[0].url;
+  const base = "https://fantasy.espn.com/apis/v3/games/flb/seasons";
+  const year = new Date().getFullYear();
 
-  // Inject into MAIN world so fetch runs with the page's origin (truly same-origin to ESPN)
-  const results = await chrome.scripting.executeScript({
-    target: { tabId },
-    world: "MAIN",
-    func: async (leagueId) => {
-      const year = new Date().getFullYear();
-      async function tryFetch(yr, view) {
-        try {
-          const r = await fetch(
-            `https://fantasy.espn.com/apis/v3/games/flb/seasons/${yr}/segments/0/leagues/${leagueId}?view=${view}`,
-            { credentials: "include" }
-          );
-          const t = await r.text();
-          if (t.trim().startsWith("{")) return { ok: true, data: JSON.parse(t) };
-          return { ok: false, err: `HTTP ${r.status} — non-JSON: ${t.slice(0, 120)}` };
-        } catch (e) {
-          return { ok: false, err: e.message };
-        }
-      }
-      const r1 = await tryFetch(year, "mRoster");
-      if (r1.ok) {
-        const m1 = await tryFetch(year, "mMatchupScore");
-        const m2 = m1.ok ? m1 : await tryFetch(year - 1, "mMatchupScore");
-        return { rosterData: r1.data, matchupData: m2.ok ? m2.data : null };
-      }
-      const r2 = await tryFetch(year - 1, "mRoster");
-      if (r2.ok) {
-        const m2 = await tryFetch(year - 1, "mMatchupScore");
-        return { rosterData: r2.data, matchupData: m2.ok ? m2.data : null };
-      }
-      return { rosterData: null, matchupData: null, debug: r1.err };
-    },
-    args: [leagueId],
-  });
-
-  const data = results?.[0]?.result;
-  if (!data?.rosterData) {
-    const hint = data?.debug ? ` (${data.debug})` : "";
-    throw new Error(`Could not fetch ESPN league data — make sure you are on an ESPN Fantasy tab and logged in.${hint}`);
+  async function navFetch(url) {
+    await chrome.tabs.update(tabId, { url });
+    await waitForTabLoad(tabId);
+    const res = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const t = document.body?.innerText || "";
+        return t.trim().startsWith("{") ? t : null;
+      },
+    });
+    const raw = res?.[0]?.result;
+    return raw ? JSON.parse(raw) : null;
   }
-  return data;
+
+  try {
+    let rosterData = await navFetch(`${base}/${year}/segments/0/leagues/${leagueId}?view=mRoster`);
+    if (!rosterData) {
+      rosterData = await navFetch(`${base}/${year - 1}/segments/0/leagues/${leagueId}?view=mRoster`);
+    }
+    if (!rosterData) {
+      throw new Error("Could not load ESPN roster data — make sure you are logged into ESPN Fantasy.");
+    }
+
+    const dataYear = rosterData.seasonId || year;
+    let matchupData = await navFetch(`${base}/${dataYear}/segments/0/leagues/${leagueId}?view=mMatchupScore`);
+    if (!matchupData) {
+      matchupData = await navFetch(`${base}/${dataYear - 1}/segments/0/leagues/${leagueId}?view=mMatchupScore`);
+    }
+
+    return { rosterData, matchupData: matchupData || null };
+  } finally {
+    // Restore the ESPN tab to where it was
+    chrome.tabs.update(tabId, { url: originalUrl }).catch(() => {});
+  }
 }
 
 // ── Read roster from ESPN page DOM ────────────────────────────────────────────

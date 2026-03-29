@@ -77,11 +77,17 @@ syncBtn.addEventListener("click", async () => {
   setSyncing(true);
 
   try {
+    const [s2Cookie, swidCookie] = await Promise.all([
+      chrome.cookies.get({ url: "https://www.espn.com", name: "espn_s2" }),
+      chrome.cookies.get({ url: "https://www.espn.com", name: "SWID" }),
+    ]);
+    const creds = { leagueId, espnS2: s2Cookie?.value || "", swid: swidCookie?.value || "" };
+
     const players = await fetchESPNRoster();
     if (!players.length) throw new Error("No players found — make sure you are on your ESPN Fantasy team page.");
 
     await chrome.storage.local.set({ lastRoster: players });
-    await pushToNaylorade(players, appUrl);
+    await pushToNaylorade(players, appUrl, creds);
 
     showPlayers(players, true);
     openBtn.style.display = "block";
@@ -119,7 +125,7 @@ async function fetchESPNRoster() {
 }
 
 // ── Push roster into Naylorade ────────────────────────────────────────────────
-async function pushToNaylorade(players, appUrl) {
+async function pushToNaylorade(players, appUrl, creds) {
   const allTabs = await chrome.tabs.query({});
   const existing = allTabs.find(t => t.url?.startsWith(appUrl));
 
@@ -134,11 +140,14 @@ async function pushToNaylorade(players, appUrl) {
 
   await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: (players) => {
+    func: (players, creds) => {
       localStorage.setItem("naylorade_roster", JSON.stringify(players));
+      if (creds?.espnS2 && creds?.swid) {
+        localStorage.setItem("naylorade_espn_creds", JSON.stringify(creds));
+      }
       window.location.reload();
     },
-    args: [players],
+    args: [players, creds],
   });
 }
 

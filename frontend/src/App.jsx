@@ -228,10 +228,10 @@ export default function App() {
   }, [games, roster, pollAllLive]);
 
   useEffect(() => {
-    if (view === "analytics" && espnCreds && !matchupData && !matchupLoading) {
+    if (view === "analytics" && espnCreds && !matchupData && !matchupLoading && !matchupError) {
       loadMatchup(espnCreds);
     }
-  }, [view, espnCreds, matchupData, matchupLoading, loadMatchup]);
+  }, [view, espnCreds, matchupData, matchupLoading, matchupError, loadMatchup]);
 
   const myGames = games.filter(g => g.fantasyPlayers?.length > 0);
   const playingCount = myGames.length;

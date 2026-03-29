@@ -55,8 +55,10 @@ async function checkESPNCookies() {
 // ── League ID detection ───────────────────────────────────────────────────────
 async function detectLeagueId() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const match = (tab?.url || "").match(/leagueId=(\d+)/);
+    // Query all tabs — currentWindow:true in a popup context points to the popup window, not the browser
+    const allTabs = await chrome.tabs.query({});
+    const espnTab = allTabs.find(t => t.url?.includes("espn.com") && t.url?.includes("leagueId="));
+    const match = (espnTab?.url || "").match(/leagueId=(\d+)/);
     if (match && !leagueIdInput.value) leagueIdInput.value = match[1];
   } catch { }
 }
@@ -106,13 +108,11 @@ syncBtn.addEventListener("click", async () => {
 
 // ── Fetch ESPN league data by injecting into ESPN tab (same-origin fetch) ────
 async function fetchESPNLeagueData(leagueId) {
-  // Find an open ESPN Fantasy tab — we need one so fetch runs same-origin
-  const espnTabs = [
-    ...await chrome.tabs.query({ url: "*://fantasy.espn.com/*" }),
-    ...await chrome.tabs.query({ url: "*://www.espn.com/fantasy/*" }),
-  ];
+  // Must use a fantasy.espn.com tab — fetching fantasy.espn.com API from www.espn.com is cross-origin and fails
+  const allTabs = await chrome.tabs.query({});
+  const espnTabs = allTabs.filter(t => t.url?.includes("fantasy.espn.com"));
   if (!espnTabs.length) {
-    throw new Error("No ESPN Fantasy tab found — open fantasy.espn.com first, then try again.");
+    throw new Error("No fantasy.espn.com tab found — open fantasy.espn.com in a tab first, then try again.");
   }
 
   const tabId = espnTabs[0].id;
@@ -162,12 +162,10 @@ async function fetchESPNLeagueData(leagueId) {
 
 // ── Read roster from ESPN page DOM ────────────────────────────────────────────
 async function fetchESPNRoster() {
-  const espnTabs = [
-    ...await chrome.tabs.query({ url: "*://fantasy.espn.com/*" }),
-    ...await chrome.tabs.query({ url: "*://www.espn.com/fantasy/*" }),
-  ];
+  const allTabs2 = await chrome.tabs.query({});
+  const espnTabs = allTabs2.filter(t => t.url?.includes("fantasy.espn.com") || t.url?.includes("espn.com/fantasy"));
   if (!espnTabs.length) {
-    throw new Error("No ESPN Fantasy tab found — open your team page at espn.com/fantasy first.");
+    throw new Error("No ESPN Fantasy tab found — open your team page at fantasy.espn.com first.");
   }
 
   const results = await chrome.scripting.executeScript({

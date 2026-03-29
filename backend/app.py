@@ -557,11 +557,12 @@ def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
         try:
             return resp.json()
         except ValueError:
-            preview = resp.text[:300] if resp.text else "(empty)"
+            preview = resp.text[:500] if resp.text else "(empty)"
+            print(f"ESPN non-JSON response. URL: {resp.url} Status: {resp.status_code}\n{preview}", flush=True)
             raise ValueError(f"ESPN returned non-JSON (status {resp.status_code}): {preview}")
 
     # ── Call 1: matchup scores ────────────────────────────────────────────────
-    data = _fetch([("view", "mMatchup"), ("view", "mTeam")])
+    data = _fetch([("view", "mMatchup")])
     current_period = data.get("scoringPeriodId", 1)
 
     # Find user's team via SWID
@@ -574,10 +575,12 @@ def fetch_espn_matchup(league_id, espn_s2, swid, year=None):
     if my_team_id is None and data.get("teams"):
         my_team_id = data["teams"][0]["id"]
 
-    # Team name map
+    # Team name map — pull from teams array if present, otherwise fall back to IDs
     team_map = {}
     for t in data.get("teams", []):
-        tid = t["id"]
+        tid = t.get("id")
+        if tid is None:
+            continue
         loc = t.get("location", "")
         nick = t.get("nickname", "")
         team_map[tid] = (f"{loc} {nick}".strip()) or f"Team {tid}"

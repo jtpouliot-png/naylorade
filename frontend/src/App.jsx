@@ -538,8 +538,7 @@ function CategoryRow({ cat, isLast }) {
       </div>
       <div style={{ textAlign: "right", paddingRight: 10 }}>
         <div style={{ fontSize: 15, fontWeight: isWin ? 700 : 400 }}>{formatStatScore(cat.abbr, cat.myScore)}</div>
-        <PctBadge pct={cat.myPercentile}  label="wk"  />
-        <PctBadge pct={cat.mySeasonPct}   label="szn" />
+        <PctBadge pct={cat.myPercentile} label="wk" />
       </div>
       <div style={{ textAlign: "center", paddingTop: 1 }}>
         <span style={{
@@ -552,8 +551,42 @@ function CategoryRow({ cat, isLast }) {
       </div>
       <div style={{ paddingLeft: 10 }}>
         <div style={{ fontSize: 15, fontWeight: isLoss ? 700 : 400 }}>{formatStatScore(cat.abbr, cat.oppScore)}</div>
-        <PctBadge pct={cat.oppPercentile} label="wk"  />
-        <PctBadge pct={cat.oppSeasonPct}  label="szn" />
+        <PctBadge pct={cat.oppPercentile} label="wk" />
+      </div>
+    </div>
+  );
+}
+
+function LeagueRankings({ stats, myTeamId, oppTeamId }) {
+  if (!stats?.length) return null;
+  return (
+    <div style={{ marginTop: 28 }}>
+      <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 10 }}>
+        League Rankings — This Week
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 8 }}>
+        {stats.map(stat => (
+          <div key={stat.statId} style={{ border: "1px solid var(--border)", borderRadius: 4, background: "var(--surface)", padding: "10px 12px" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 7 }}>
+              {stat.abbr} <span style={{ fontWeight: 400, color: "var(--text-muted)", fontSize: 10 }}>{stat.name}</span>
+            </div>
+            {stat.teams.map(t => (
+              <div key={t.teamId} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "2px 4px", marginBottom: 1, borderRadius: 3, fontSize: 11,
+                background: t.isMe ? "#d4edda" : t.isOpp ? "#fff3cd" : "transparent",
+              }}>
+                <span style={{ color: t.isMe ? "#155724" : "var(--text-primary)" }}>
+                  <span style={{ color: "var(--text-muted)", marginRight: 4, fontSize: 10 }}>{t.rank}.</span>
+                  {t.isMe ? "You" : t.name}
+                </span>
+                <span style={{ fontWeight: t.isMe ? 700 : 400, fontVariantNumeric: "tabular-nums" }}>
+                  {formatStatScore(stat.abbr, t.score)}
+                </span>
+              </div>
+            ))}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -582,7 +615,7 @@ function MatchupView({ data, loading, error, onRefresh, hasEspnData }) {
     </div>
   );
 
-  const { myTeam, opponent, record, categories, scoringPeriodId } = data;
+  const { myTeam, opponent, record, categories, leagueWeekStats, scoringPeriodId } = data;
   const { wins = 0, losses = 0, ties = 0 } = record;
   const isWinning = wins > losses, isLosing = losses > wins;
 
@@ -654,8 +687,10 @@ function MatchupView({ data, loading, error, onRefresh, hasEspnData }) {
 
       <div style={{ marginTop: 14, display: "flex", gap: 8, alignItems: "center" }}>
         <button className="btn-outline" onClick={onRefresh}>Refresh</button>
-        <span style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: 4 }}>wk = this week · szn = season · percentile vs league</span>
+        <span style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: 4 }}>wk = percentile vs all league teams this week</span>
       </div>
+
+      <LeagueRankings stats={leagueWeekStats} myTeamId={myTeam.id} oppTeamId={opponent.id} />
     </div>
   );
 }

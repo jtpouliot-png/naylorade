@@ -649,6 +649,7 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
 
     all_stat_id_strs = set(my_sbs.keys()) | set(opp_sbs.keys())
     categories = []
+    league_week_stats = []
     seen_abbrs = set()
     for stat_id_str in sorted(all_stat_id_strs, key=lambda x: int(x)):
         stat_id = int(stat_id_str)
@@ -667,10 +668,6 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
             tid: (stats.get(stat_id_str) or {}).get("score")
             for tid, stats in all_period_stats.items()
         }
-        season_vals = {
-            tid: stats.get(stat_id)
-            for tid, stats in all_season_stats.items()
-        }
 
         categories.append({
             "statId":        stat_id,
@@ -682,8 +679,30 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
             "result":        my_stat.get("result", "TIE"),
             "myPercentile":  _percentile(period_vals, my_team_id,  is_reverse),
             "oppPercentile": _percentile(period_vals, opp_team_id, is_reverse),
-            "mySeasonPct":   _percentile(season_vals, my_team_id,  is_reverse),
-            "oppSeasonPct":  _percentile(season_vals, opp_team_id, is_reverse),
+        })
+
+        # League-wide rankings for this stat this week
+        team_scores = []
+        for tid, score in period_vals.items():
+            team_scores.append({
+                "teamId": tid,
+                "name":   team_map.get(tid, f"Team {tid}"),
+                "score":  score,
+                "isMe":   tid == my_team_id,
+                "isOpp":  tid == opp_team_id,
+            })
+        team_scores.sort(key=lambda x: (
+            x["score"] is None,
+            (x["score"] or 0) if is_reverse else -(x["score"] or 0)
+        ))
+        for i, t in enumerate(team_scores):
+            t["rank"] = i + 1
+        league_week_stats.append({
+            "statId":        stat_id,
+            "abbr":          abbr,
+            "name":          name,
+            "isReverseItem": is_reverse,
+            "teams":         team_scores,
         })
 
     return {
@@ -691,6 +710,7 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
         "opponent":        {"id": opp_team_id, "name": team_map.get(opp_team_id, "Opponent")},
         "record":          {"wins": my_cumul.get("wins", 0), "losses": my_cumul.get("losses", 0), "ties": my_cumul.get("ties", 0)},
         "categories":      categories,
+        "leagueWeekStats": league_week_stats,
         "scoringPeriodId": current_period,
     }
 

@@ -94,10 +94,16 @@ syncBtn.addEventListener("click", async () => {
     }
     const creds = { leagueId, espnS2: s2Cookie?.value || "", swid: swidCookie?.value || "" };
 
-    const players = await fetchESPNRoster();
-    if (!players.length) throw new Error("No players found — make sure you are on your ESPN Fantasy team page.");
-
+    // Fetch league data first (navigates ESPN tab to API URLs, then back)
     const espnData = await fetchESPNLeagueData(leagueId);
+
+    // Extract player names from API data — more reliable than DOM scraping
+    let players = extractPlayersFromRosterData(espnData.rosterData, creds.swid);
+    if (!players.length) {
+      // Fall back to DOM scraping if API extraction fails
+      players = await fetchESPNRoster();
+    }
+    if (!players.length) throw new Error("No players found in your ESPN roster.");
 
     await chrome.storage.local.set({ lastRoster: players });
     await pushToNaylorade(players, appUrl, creds, espnData);
@@ -155,18 +161,30 @@ async function fetchESPNLeagueData(leagueId) {
 
     return { rosterData, matchupData: matchupData || null };
   } finally {
-    // Restore the ESPN tab to where it was
-    chrome.tabs.update(tabId, { url: originalUrl }).catch(() => {});
+    // Restore the ESPN tab to where it was and wait for it to finish loading
+    try {
+      await chrome.tabs.update(tabId, { url: originalUrl });
+      await waitForTabLoad(tabId);
+    } catch {}
   }
 }
 
-// ── Read roster from ESPN page DOM ────────────────────────────────────────────
+// ── Extract player names from mRoster API data ────────────────────────────────
+function extractPlayersFromRosterData(rosterData, swid) {
+  const teams = rosterData?.teams || [];
+  // Find the team owned by this user via SWID
+  const myTeam = teams.find(t => t.primaryOwner === swid) || teams[0];
+  if (!myTeam) return [];
+  return (myTeam.roster?.entries || [])
+    .map(e => e.playerPoolEntry?.player?.fullName)
+    .filter(Boolean);
+}
+
+// ── Read roster from ESPN page DOM (fallback) ─────────────────────────────────
 async function fetchESPNRoster() {
   const allTabs2 = await chrome.tabs.query({});
   const espnTabs = allTabs2.filter(t => t.url?.includes("fantasy.espn.com") || t.url?.includes("espn.com/fantasy"));
-  if (!espnTabs.length) {
-    throw new Error("No ESPN Fantasy tab found — open your team page at fantasy.espn.com first.");
-  }
+  if (!espnTabs.length) return [];
 
   const results = await chrome.scripting.executeScript({
     target: { tabId: espnTabs[0].id },
@@ -179,9 +197,7 @@ async function fetchESPNRoster() {
     },
   });
 
-  const players = results?.[0]?.result;
-  if (!players) throw new Error("Could not read the ESPN page — make sure it is fully loaded.");
-  return players;
+  return results?.[0]?.result || [];
 }
 
 // ── Push roster into Naylorade ────────────────────────────────────────────────

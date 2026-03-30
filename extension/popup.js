@@ -132,11 +132,10 @@ syncBtn.addEventListener("click", async () => {
 async function fetchESPNLeagueData(leagueId) {
   const { teamId } = await chrome.storage.local.get("teamId");
   const year = new Date().getFullYear();
-  const teamParam = teamId ? `&teamId=${teamId}` : "";
-  // Use fantasycast page — confirmed to load real 2026 matchup + roster data
+  // No matchupPeriodId — let ESPN default to the current period
   const url = teamId
-    ? `https://fantasy.espn.com/baseball/fantasycast?leagueId=${leagueId}&teamId=${teamId}&seasonId=${year}&matchupPeriodId=1`
-    : `https://fantasy.espn.com/baseball/team?leagueId=${leagueId}${teamParam}`;
+    ? `https://fantasy.espn.com/baseball/fantasycast?leagueId=${leagueId}&teamId=${teamId}&seasonId=${year}`
+    : `https://fantasy.espn.com/baseball/team?leagueId=${leagueId}`;
   const tempTab = await chrome.tabs.create({ url, active: false });
   const tabId = tempTab.id;
 
@@ -151,12 +150,23 @@ async function fetchESPNLeagueData(leagueId) {
         world: "MAIN",
         func: () => ({
           roster: localStorage.getItem("_espn_mRoster"),
-          matchup: localStorage.getItem("_espn_mMatchupScore"),
+          matchup: localStorage.getItem("_espn_mMatchupScore")
+               || localStorage.getItem("_espn_mBoxscore")
+               || localStorage.getItem("_espn_mLiveScoring"),
           draft: localStorage.getItem("_espn_mDraftDetail"),
+          allKeys: (() => {
+            const k = [];
+            for (let i = 0; i < localStorage.length; i++) {
+              const key = localStorage.key(i);
+              if (key.startsWith("_espn_")) k.push(key);
+            }
+            return k.join("|");
+          })(),
         }),
       });
       const d = res?.[0]?.result;
       if (d?.roster || d?.draft) {
+        console.log("[naylorade] captured ESPN keys:", d.allKeys);
         return {
           rosterData: JSON.parse(d.roster || d.draft),
           matchupData: d.matchup ? JSON.parse(d.matchup) : null,

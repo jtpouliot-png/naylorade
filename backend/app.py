@@ -583,6 +583,10 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
             if tid not in team_map or not team_map[tid] or team_map[tid].startswith("Team "):
                 team_map[tid] = name or member_names.get(tid) or f"Team {tid}"
 
+    # Log team fields to diagnose missing names
+    if roster_data.get("teams"):
+        t0 = roster_data["teams"][0]
+        print(f"team fields sample: {list(t0.keys())}", flush=True)
     print(f"my_team_id={my_team_id} period={current_period} teams={list(team_map.items())[:4]}", flush=True)
 
     # Matchup scoring comes from matchupData if available, fall back to rosterData

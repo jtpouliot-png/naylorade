@@ -138,6 +138,11 @@ async function fetchESPNLeagueData(leagueId) {
       target: { tabId },
       world: "MAIN",
       func: async (url) => {
+        // Unregister ESPN's service worker — it intercepts and blocks injected fetches
+        try {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map(r => r.unregister()));
+        } catch {}
         const f = window.__nativeFetch || window.fetch;
         try {
           const r = await f(url, {

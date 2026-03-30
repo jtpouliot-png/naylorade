@@ -566,11 +566,13 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
 
     # Build team name map — try location+nickname, fall back to member name, then "Team N"
     member_names = {}
-    for m in roster_data.get("members", []):
-        tid = m.get("onTeamId")
-        name = m.get("displayName") or f"{m.get('firstName','')} {m.get('lastName','')}".strip()
-        if tid and name:
-            member_names[tid] = name
+    for src in [roster_data, matchup_data or {}]:
+        for m in src.get("members", []):
+            tid = m.get("onTeamId")
+            name = (m.get("displayName") or
+                    f"{m.get('firstName','')} {m.get('lastName','')}".strip())
+            if tid and name:
+                member_names[tid] = name
 
     team_map = {}
     for src in [roster_data, matchup_data or {}]:
@@ -583,6 +585,7 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
             name = f"{loc} {nick}".strip()
             if tid not in team_map or not team_map[tid] or team_map[tid].startswith("Team "):
                 team_map[tid] = name or member_names.get(tid) or f"Team {tid}"
+    print(f"member_names={dict(list(member_names.items())[:4])} team_map={dict(list(team_map.items())[:4])}", flush=True)
 
     # Log team fields to diagnose missing names
     if roster_data.get("teams"):

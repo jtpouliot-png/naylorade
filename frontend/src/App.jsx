@@ -630,11 +630,11 @@ function MatchupView({ data, loading, error, onRefresh, hasEspnData }) {
       <div style={{ display: "grid", gridTemplateColumns: "130px 1fr 44px 1fr", padding: "6px 16px", background: "var(--bg)", border: "1px solid var(--border)", borderBottom: "none", borderRadius: "4px 4px 0 0" }}>
         <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)" }}>Category</div>
         <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)", textAlign: "right", paddingRight: 10 }}>
-          {myTeam.name.split(" ").slice(-1)[0]}
+          You
         </div>
         <div />
         <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)", paddingLeft: 10 }}>
-          {opponent.name.split(" ").slice(-1)[0]}
+          Opp
         </div>
       </div>
 

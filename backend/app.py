@@ -593,6 +593,10 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
     schedule_source = matchup_data if (matchup_data and matchup_data.get("schedule")) else roster_data
     print(f"schedule_source keys: {list(schedule_source.keys())} schedule_len={len(schedule_source.get('schedule', []))}", flush=True)
 
+    # Log schedule periods to diagnose period mismatch
+    sched_summary = [(m.get("matchupPeriodId"), (m.get("home") or {}).get("teamId"), (m.get("away") or {}).get("teamId")) for m in schedule_source.get("schedule", [])]
+    print(f"schedule periods/teams: {sched_summary}", flush=True)
+
     all_period_stats = {}
     my_side = opp_side = None
     for matchup in schedule_source.get("schedule", []):

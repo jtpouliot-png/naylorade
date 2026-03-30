@@ -535,8 +535,9 @@ def _percentile(vals_by_team, team_id, is_reverse):
 def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
     """Process pre-fetched ESPN data (fetched in-browser by extension) into matchup analytics."""
 
-    # Get scoringPeriodId from either source
-    current_period = (roster_data.get("scoringPeriodId")
+    # scoringPeriodId is a daily counter; matchupPeriodId is weekly — they differ.
+    # We'll find the team's matchup first, then read the actual matchupPeriodId from it.
+    scoring_period = (roster_data.get("scoringPeriodId")
                       or (matchup_data or {}).get("scoringPeriodId")
                       or 1)
 
@@ -587,19 +588,38 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
     if roster_data.get("teams"):
         t0 = roster_data["teams"][0]
         print(f"team fields sample: {list(t0.keys())}", flush=True)
-    print(f"my_team_id={my_team_id} period={current_period} teams={list(team_map.items())[:4]}", flush=True)
+    print(f"my_team_id={my_team_id} scoring_period={scoring_period} teams={list(team_map.items())[:4]}", flush=True)
 
     # Matchup scoring comes from matchupData if available, fall back to rosterData
     schedule_source = matchup_data if (matchup_data and matchup_data.get("schedule")) else roster_data
-    print(f"schedule_source keys: {list(schedule_source.keys())} schedule_len={len(schedule_source.get('schedule', []))}", flush=True)
+    all_schedule = schedule_source.get("schedule", [])
+    sched_summary = [(m.get("matchupPeriodId"), (m.get("home") or {}).get("teamId"), (m.get("away") or {}).get("teamId")) for m in all_schedule]
+    print(f"matchup_data={'yes' if matchup_data else 'no'} schedule_len={len(all_schedule)} periods/teams: {sched_summary}", flush=True)
 
-    # Log schedule periods to diagnose period mismatch
-    sched_summary = [(m.get("matchupPeriodId"), (m.get("home") or {}).get("teamId"), (m.get("away") or {}).get("teamId")) for m in schedule_source.get("schedule", [])]
-    print(f"schedule periods/teams: {sched_summary}", flush=True)
+    # Find the team's most recent matchup (highest matchupPeriodId) — don't filter by
+    # scoringPeriodId since it's a daily counter and matchupPeriodId is weekly.
+    my_matchup = None
+    for matchup in all_schedule:
+        home = matchup.get("home") or {}
+        away = matchup.get("away") or {}
+        if home.get("teamId") == my_team_id or away.get("teamId") == my_team_id:
+            if my_matchup is None or matchup.get("matchupPeriodId", 0) > my_matchup.get("matchupPeriodId", 0):
+                my_matchup = matchup
+
+    if my_matchup is None:
+        print(f"No matchup found for team {my_team_id} (scoring_period={scoring_period})", flush=True)
+        return None
+
+    current_period = my_matchup.get("matchupPeriodId", scoring_period)
+    home = my_matchup.get("home") or {}
+    away = my_matchup.get("away") or {}
+    if home.get("teamId") == my_team_id:
+        my_side, opp_side = home, away
+    else:
+        my_side, opp_side = away, home
 
     all_period_stats = {}
-    my_side = opp_side = None
-    for matchup in schedule_source.get("schedule", []):
+    for matchup in all_schedule:
         if matchup.get("matchupPeriodId") != current_period:
             continue
         for side_key in ("home", "away"):
@@ -608,16 +628,6 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
             if tid:
                 sbs = (side.get("cumulativeScore") or {}).get("scoreByStat") or {}
                 all_period_stats[tid] = sbs
-        home = matchup.get("home") or {}
-        away = matchup.get("away") or {}
-        if home.get("teamId") == my_team_id:
-            my_side, opp_side = home, away
-        elif away.get("teamId") == my_team_id:
-            my_side, opp_side = away, home
-
-    if my_side is None:
-        print(f"No matchup found for team {my_team_id} in period {current_period}", flush=True)
-        return None
 
     opp_team_id = (opp_side or {}).get("teamId")
     my_cumul  = (my_side  or {}).get("cumulativeScore") or {}

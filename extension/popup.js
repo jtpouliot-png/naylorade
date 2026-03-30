@@ -118,46 +118,52 @@ syncBtn.addEventListener("click", async () => {
 });
 
 // ── Fetch ESPN league data via a hidden background tab ────────────────────────
-// Creates a temporary tab (never made active) to navigate ESPN API URLs.
-// The user's existing tabs are never touched.
+// Loads fantasy.espn.com in a background tab, then fetches API data using
+// the isolated world (native fetch, not ESPN's overridden one) with cookies.
 async function fetchESPNLeagueData(leagueId) {
   const base = "https://fantasy.espn.com/apis/v3/games/flb/seasons";
   const year = new Date().getFullYear();
 
-  // Open a background tab — active:false keeps it behind the current tab
-  const tempTab = await chrome.tabs.create({ url: "about:blank", active: false });
+  // Load the ESPN Fantasy landing page so cookies + referer are established
+  const tempTab = await chrome.tabs.create({ url: "https://fantasy.espn.com/baseball/", active: false });
   const tabId = tempTab.id;
+  await waitForTabLoad(tabId);
 
-  async function navFetch(url) {
-    await chrome.tabs.update(tabId, { url });
-    await waitForTabLoad(tabId);
+  // Isolated world = native browser fetch (not ESPN's overridden window.fetch)
+  async function apiFetch(url) {
     const res = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => {
-        const t = document.body?.innerText || "";
-        return t.trim().startsWith("{") ? t : null;
+      func: async (url) => {
+        try {
+          const r = await fetch(url, {
+            credentials: "include",
+            headers: { "Accept": "application/json" },
+          });
+          const t = await r.text();
+          return t.trim().startsWith("{") ? t : `ERR:${r.status}:${t.slice(0, 80)}`;
+        } catch (e) {
+          return `ERR:0:${e.message}`;
+        }
       },
+      args: [url],
     });
-    const raw = res?.[0]?.result;
-    return raw ? JSON.parse(raw) : null;
+    const raw = res?.[0]?.result || "";
+    if (raw.startsWith("ERR:")) return { data: null, err: raw };
+    return { data: JSON.parse(raw), err: null };
   }
 
   try {
-    let rosterData = await navFetch(`${base}/${year}/segments/0/leagues/${leagueId}?view=mRoster`);
-    if (!rosterData) {
-      rosterData = await navFetch(`${base}/${year - 1}/segments/0/leagues/${leagueId}?view=mRoster`);
-    }
-    if (!rosterData) {
-      throw new Error("Could not load ESPN roster data — make sure you are logged into ESPN Fantasy.");
+    let roster = await apiFetch(`${base}/${year}/segments/0/leagues/${leagueId}?view=mRoster`);
+    if (!roster.data) roster = await apiFetch(`${base}/${year - 1}/segments/0/leagues/${leagueId}?view=mRoster`);
+    if (!roster.data) {
+      throw new Error(`Could not load ESPN roster data — make sure you are logged into ESPN Fantasy. (${roster.err})`);
     }
 
-    const dataYear = rosterData.seasonId || year;
-    let matchupData = await navFetch(`${base}/${dataYear}/segments/0/leagues/${leagueId}?view=mMatchupScore`);
-    if (!matchupData) {
-      matchupData = await navFetch(`${base}/${dataYear - 1}/segments/0/leagues/${leagueId}?view=mMatchupScore`);
-    }
+    const dataYear = roster.data.seasonId || year;
+    let matchup = await apiFetch(`${base}/${dataYear}/segments/0/leagues/${leagueId}?view=mMatchupScore`);
+    if (!matchup.data) matchup = await apiFetch(`${base}/${dataYear - 1}/segments/0/leagues/${leagueId}?view=mMatchupScore`);
 
-    return { rosterData, matchupData: matchupData || null };
+    return { rosterData: roster.data, matchupData: matchup.data || null };
   } finally {
     chrome.tabs.remove(tabId).catch(() => {});
   }

@@ -452,7 +452,8 @@ ESPN_STAT_MAP = {
     0:  ("AB",   "At Bats",          False),
     1:  ("H",    "Hits",             False),
     2:  ("AVG",  "Batting Avg",      False),
-    3:  ("BB",   "Walks",            False),   # value=8 counting stat (was wrong: OBP)
+    3:  ("BB",   "Walks",            False),   # counting stat, value=8
+    4:  ("SLG",  "Slugging %",       False),   # ESPN stores as 0; computed via _fix_rate_stats
     5:  ("HR",   "Home Runs",        False),
     6:  ("R",    "Runs",             False),
     7:  ("RBI",  "RBIs",             False),
@@ -462,7 +463,7 @@ ESPN_STAT_MAP = {
     11: ("SB",   "Stolen Bases",     False),
     12: ("CS",   "Caught Stealing",  True),
     13: ("HBP",  "Hit by Pitch",     False),
-    17: ("SLG",  "Slugging %",       False),   # ESPN computed; confirmed 0.390 (was OPS)
+    17: ("BAA",  "Avg Allowed",      True),    # pitching stat ~0.390; lower is better
     20: ("R",    "Runs",             False),
     21: ("RBI",  "RBIs",             False),
     23: ("SB",   "Stolen Bases",     False),
@@ -522,6 +523,29 @@ def _aggregate_roster_stats(entries):
 
 
 
+
+
+def _fix_rate_stats(sbs):
+    """Compute SLG from counting components — ESPN stores stat_id 4 (SLG) as 0.
+    Confirmed stat_ids from raw_sbs log: AB=0, H=1, HR=5, 2B=25, 3B=24.
+    OBP (stat_id 9) is populated correctly by ESPN — no fix needed.
+    """
+    slg_entry = sbs.get("4")
+    if not isinstance(slg_entry, dict) or slg_entry.get("score"):
+        return sbs  # already populated or not present
+
+    def s(sid):
+        e = sbs.get(str(sid))
+        v = (e.get("score") if isinstance(e, dict) else e) or 0
+        return v
+
+    ab, h, hr = s(0), s(1), s(5)
+    doubles, triples = s(25), s(24)
+    # TB = 1B + 2×2B + 3×3B + 4×HR = H + 2B + 2×3B + 3×HR
+    total_bases = h + doubles + 2 * triples + 3 * hr
+    if ab > 0:
+        return {**sbs, "4": {**slg_entry, "score": round(total_bases / ab, 4)}}
+    return sbs
 
 
 def _percentile(vals_by_team, team_id, is_reverse):
@@ -637,13 +661,13 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None, roster_a
             tid = side.get("teamId")
             if tid:
                 sbs = (side.get("cumulativeScore") or {}).get("scoreByStat") or {}
-                all_period_stats[tid] = sbs
+                all_period_stats[tid] = _fix_rate_stats(sbs)
 
     opp_team_id = (opp_side or {}).get("teamId")
     my_cumul  = (my_side  or {}).get("cumulativeScore") or {}
     opp_cumul = (opp_side or {}).get("cumulativeScore") or {}
-    my_sbs    = my_cumul.get("scoreByStat")  or {}
-    opp_sbs   = opp_cumul.get("scoreByStat") or {}
+    my_sbs    = _fix_rate_stats(my_cumul.get("scoreByStat")  or {})
+    opp_sbs   = _fix_rate_stats(opp_cumul.get("scoreByStat") or {})
 
     # Log all raw non-zero scores to help identify stat_ids for doubles/triples
     raw_my = my_cumul.get("scoreByStat") or {}

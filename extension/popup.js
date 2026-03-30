@@ -129,13 +129,16 @@ async function fetchESPNLeagueData(leagueId) {
   const tabId = tempTab.id;
   await waitForTabLoad(tabId);
 
-  // Isolated world = native browser fetch (not ESPN's overridden window.fetch)
+  // Use window.__nativeFetch saved at document_start before ESPN overrides fetch.
+  // Must run in MAIN world to access the saved reference.
   async function apiFetch(url) {
     const res = await chrome.scripting.executeScript({
       target: { tabId },
+      world: "MAIN",
       func: async (url) => {
+        const f = window.__nativeFetch || window.fetch;
         try {
-          const r = await fetch(url, {
+          const r = await f(url, {
             credentials: "include",
             headers: { "Accept": "application/json" },
           });

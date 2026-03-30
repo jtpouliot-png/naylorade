@@ -9,6 +9,14 @@
     "*://*/*",
     "http://*/*"
   ],
+  "content_scripts": [
+    {
+      "matches": ["*://fantasy.espn.com/*"],
+      "js": ["save_fetch.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "Naylorade Roster Sync"

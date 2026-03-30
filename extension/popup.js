@@ -128,6 +128,8 @@ async function fetchESPNLeagueData(leagueId) {
   const tempTab = await chrome.tabs.create({ url: "https://fantasy.espn.com/baseball/", active: false });
   const tabId = tempTab.id;
   await waitForTabLoad(tabId);
+  const tabInfo = await chrome.tabs.get(tabId);
+  const tabFinalUrl = tabInfo.url;
 
   // Use window.__nativeFetch saved at document_start before ESPN overrides fetch.
   // Must run in MAIN world to access the saved reference.
@@ -159,7 +161,7 @@ async function fetchESPNLeagueData(leagueId) {
     let roster = await apiFetch(`${base}/${year}/segments/0/leagues/${leagueId}?view=mRoster`);
     if (!roster.data) roster = await apiFetch(`${base}/${year - 1}/segments/0/leagues/${leagueId}?view=mRoster`);
     if (!roster.data) {
-      throw new Error(`Could not load ESPN roster data — make sure you are logged into ESPN Fantasy. (${roster.err})`);
+      throw new Error(`Could not load ESPN roster data. Tab loaded at: ${tabFinalUrl} — ${roster.err}`);
     }
 
     const dataYear = roster.data.seasonId || year;

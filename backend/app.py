@@ -517,6 +517,46 @@ def _aggregate_roster_stats(entries):
     return result
 
 
+def _sbs_score(sbs, stat_id):
+    """Get the numeric score for a stat_id from a scoreByStat dict."""
+    entry = sbs.get(str(stat_id))
+    return (entry.get("score") if isinstance(entry, dict) else entry) or 0
+
+
+def _fix_rate_stats(sbs):
+    """Compute rate stats ESPN stores as 0.0 from their counting stat components.
+    OBP and SLG come through as 0 in scoreByStat — compute from H/BB/AB etc.
+    Doubles=16, Triples=17 are best-guess IDs; raw_sbs log will confirm.
+    """
+    if not sbs:
+        return sbs
+
+    ab  = _sbs_score(sbs, 0)
+    h   = _sbs_score(sbs, 1)
+    bb  = _sbs_score(sbs, 8)
+    hr  = _sbs_score(sbs, 5)
+    db  = _sbs_score(sbs, 16)  # doubles — confirm via raw_sbs log
+    tb3 = _sbs_score(sbs, 17)  # triples — confirm via raw_sbs log
+
+    fixed = dict(sbs)
+
+    # OBP = (H + BB) / (AB + BB)  [simplified: ignores HBP and SF]
+    obp_entry = sbs.get("3")
+    if isinstance(obp_entry, dict) and not obp_entry.get("score"):
+        denom = ab + bb
+        if denom > 0:
+            fixed["3"] = {**obp_entry, "score": round((h + bb) / denom, 4)}
+
+    # SLG = TB / AB   where TB = H + 2B + 2×3B + 3×HR
+    slg_entry = sbs.get("4")
+    if isinstance(slg_entry, dict) and not slg_entry.get("score"):
+        total_bases = h + db + 2 * tb3 + 3 * hr
+        if ab > 0:
+            fixed["4"] = {**slg_entry, "score": round(total_bases / ab, 4)}
+
+    return fixed
+
+
 def _percentile(vals_by_team, team_id, is_reverse):
     """Return league percentile (0–100) for a team in a given stat. None if insufficient data."""
     valid = [(tid, v) for tid, v in vals_by_team.items() if v is not None]
@@ -532,7 +572,7 @@ def _percentile(vals_by_team, team_id, is_reverse):
     return round(below / (len(valid) - 1) * 100)
 
 
-def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
+def process_espn_matchup(roster_data, matchup_data, swid, team_id=None, roster_api_data=None):
     """Process pre-fetched ESPN data (fetched in-browser by extension) into matchup analytics."""
 
     # scoringPeriodId is a daily counter; matchupPeriodId is weekly — they differ.
@@ -630,19 +670,25 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
             tid = side.get("teamId")
             if tid:
                 sbs = (side.get("cumulativeScore") or {}).get("scoreByStat") or {}
-                all_period_stats[tid] = sbs
+                all_period_stats[tid] = _fix_rate_stats(sbs)
 
     opp_team_id = (opp_side or {}).get("teamId")
     my_cumul  = (my_side  or {}).get("cumulativeScore") or {}
     opp_cumul = (opp_side or {}).get("cumulativeScore") or {}
-    my_sbs    = my_cumul.get("scoreByStat")  or {}
-    opp_sbs   = opp_cumul.get("scoreByStat") or {}
+    my_sbs    = _fix_rate_stats(my_cumul.get("scoreByStat")  or {})
+    opp_sbs   = _fix_rate_stats(opp_cumul.get("scoreByStat") or {})
 
-    print(f"my_team={my_team_id} opp={opp_team_id} my_sbs_keys={list(my_sbs.keys())[:6]}", flush=True)
+    # Log all raw non-zero scores to help identify stat_ids for doubles/triples
+    raw_my = my_cumul.get("scoreByStat") or {}
+    nonzero = {k: v.get("score") if isinstance(v, dict) else v for k, v in raw_my.items() if (v.get("score") if isinstance(v, dict) else v)}
+    print(f"raw_sbs nonzero: {nonzero}", flush=True)
+    print(f"my_team={my_team_id} opp={opp_team_id} my_sbs_keys={list(my_sbs.keys())[:10]}", flush=True)
 
-    # Season stats from roster entries
+    # Season stats from mRoster (has player season stats); fall back to mDraftDetail
+    season_source = roster_api_data if roster_api_data and roster_api_data.get("teams") else roster_data
+    print(f"season_source={'mRoster' if season_source is roster_api_data else 'mDraftDetail'}", flush=True)
     all_season_stats = {}
-    for team in roster_data.get("teams", []):
+    for team in season_source.get("teams", []):
         tid = team.get("id")
         entries = (team.get("roster") or {}).get("entries", [])
         all_season_stats[tid] = _aggregate_roster_stats(entries)
@@ -669,6 +715,11 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
             for tid, stats in all_period_stats.items()
         }
 
+        season_vals = {
+            tid: stats.get(stat_id)
+            for tid, stats in all_season_stats.items()
+        }
+
         categories.append({
             "statId":        stat_id,
             "abbr":          abbr,
@@ -679,6 +730,8 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
             "result":        my_stat.get("result", "TIE"),
             "myPercentile":  _percentile(period_vals, my_team_id,  is_reverse),
             "oppPercentile": _percentile(period_vals, opp_team_id, is_reverse),
+            "mySeasonPct":   _percentile(season_vals, my_team_id,  is_reverse),
+            "oppSeasonPct":  _percentile(season_vals, opp_team_id, is_reverse),
         })
 
         # League-wide rankings for this stat this week
@@ -810,16 +863,18 @@ def get_news():
 @app.route("/api/matchup", methods=["POST"])
 def get_matchup():
     body = request.json or {}
-    roster_data  = body.get("rosterData")
-    matchup_data = body.get("matchupData")
-    swid         = body.get("swid", "").strip()
-    team_id      = body.get("teamId")
+    roster_data      = body.get("rosterData")
+    matchup_data     = body.get("matchupData")
+    roster_api_data  = body.get("rosterApiData")   # mRoster: has player season stats
+    swid             = body.get("swid", "").strip()
+    team_id          = body.get("teamId")
 
     if not roster_data or not swid:
         return jsonify({"error": "rosterData and swid are required"}), 400
 
     try:
-        result = process_espn_matchup(roster_data, matchup_data, swid, team_id=team_id)
+        result = process_espn_matchup(roster_data, matchup_data, swid, team_id=team_id,
+                                      roster_api_data=roster_api_data)
         if result is None:
             return jsonify({"error": "No active matchup found for this team"}), 404
         return jsonify(result)

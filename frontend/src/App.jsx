@@ -106,7 +106,7 @@ export default function App() {
     try {
       const data = await apiFetch("/api/matchup", {
         method: "POST",
-        body: JSON.stringify({ rosterData: espnData.rosterData, matchupData: espnData.matchupData, swid: espnData.swid, teamId: espnData.teamId }),
+        body: JSON.stringify({ rosterData: espnData.rosterData, matchupData: espnData.matchupData, rosterApiData: espnData.rosterApiData, swid: espnData.swid, teamId: espnData.teamId }),
       });
       setMatchupData(data);
     } catch (e) {
@@ -539,6 +539,7 @@ function CategoryRow({ cat, isLast }) {
       <div style={{ textAlign: "right", paddingRight: 10 }}>
         <div style={{ fontSize: 15, fontWeight: isWin ? 700 : 400 }}>{formatStatScore(cat.abbr, cat.myScore)}</div>
         <PctBadge pct={cat.myPercentile} label="wk" />
+        {cat.mySeasonPct != null && <PctBadge pct={cat.mySeasonPct} label="szn" />}
       </div>
       <div style={{ textAlign: "center", paddingTop: 1 }}>
         <span style={{
@@ -552,6 +553,7 @@ function CategoryRow({ cat, isLast }) {
       <div style={{ paddingLeft: 10 }}>
         <div style={{ fontSize: 15, fontWeight: isLoss ? 700 : 400 }}>{formatStatScore(cat.abbr, cat.oppScore)}</div>
         <PctBadge pct={cat.oppPercentile} label="wk" />
+        {cat.oppSeasonPct != null && <PctBadge pct={cat.oppSeasonPct} label="szn" />}
       </div>
     </div>
   );
@@ -687,7 +689,7 @@ function MatchupView({ data, loading, error, onRefresh, hasEspnData }) {
 
       <div style={{ marginTop: 14, display: "flex", gap: 8, alignItems: "center" }}>
         <button className="btn-outline" onClick={onRefresh}>Refresh</button>
-        <span style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: 4 }}>wk = percentile vs all league teams this week</span>
+        <span style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: 4 }}>wk = this week vs league · szn = full season vs league</span>
       </div>
 
       <LeagueRankings stats={leagueWeekStats} myTeamId={myTeam.id} oppTeamId={opponent.id} />

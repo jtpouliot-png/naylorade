@@ -168,9 +168,30 @@ async function fetchESPNLeagueData(leagueId) {
       const d = res?.[0]?.result;
       if (d?.roster || d?.draft) {
         console.log("[naylorade] captured ESPN keys:", d.allKeys);
+
+        // Fetch mRoster directly from within the ESPN tab (cookies included automatically)
+        let rosterApiData = null;
+        try {
+          const rosterRes = await chrome.scripting.executeScript({
+            target: { tabId },
+            world: "MAIN",
+            func: async (leagueId, year) => {
+              const url = `https://fantasy.espn.com/apis/v3/games/flb/seasons/${year}/segments/0/leagues/${leagueId}?view=mRoster`;
+              const resp = await fetch(url, { credentials: "include" });
+              return resp.ok ? resp.text() : null;
+            },
+            args: [leagueId, year],
+          });
+          const rosterText = rosterRes?.[0]?.result;
+          if (rosterText) rosterApiData = JSON.parse(rosterText);
+        } catch (e) {
+          console.warn("[naylorade] mRoster fetch failed:", e);
+        }
+
         return {
           rosterData: JSON.parse(d.roster || d.draft),
           matchupData: d.matchup ? JSON.parse(d.matchup) : null,
+          rosterApiData,
         };
       }
     }

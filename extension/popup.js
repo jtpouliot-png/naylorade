@@ -55,11 +55,15 @@ async function checkESPNCookies() {
 // ── League ID detection ───────────────────────────────────────────────────────
 async function detectLeagueId() {
   try {
-    // Query all tabs — currentWindow:true in a popup context points to the popup window, not the browser
     const allTabs = await chrome.tabs.query({});
     const espnTab = allTabs.find(t => t.url?.includes("espn.com") && t.url?.includes("leagueId="));
-    const match = (espnTab?.url || "").match(/leagueId=(\d+)/);
-    if (match && !leagueIdInput.value) leagueIdInput.value = match[1];
+    const url = espnTab?.url || "";
+    const leagueMatch = url.match(/leagueId=(\d+)/);
+    const teamMatch = url.match(/teamId=(\d+)/);
+    if (leagueMatch && !leagueIdInput.value) leagueIdInput.value = leagueMatch[1];
+    if (leagueMatch && teamMatch) {
+      await chrome.storage.local.set({ teamId: teamMatch[1] });
+    }
   } catch { }
 }
 
@@ -122,8 +126,10 @@ syncBtn.addEventListener("click", async () => {
 // (document_start, MAIN world) intercepts ESPN's own API calls and stores
 // responses in localStorage. We poll until the data appears.
 async function fetchESPNLeagueData(leagueId) {
+  const { teamId } = await chrome.storage.local.get("teamId");
+  const teamParam = teamId ? `&teamId=${teamId}` : "";
   const tempTab = await chrome.tabs.create({
-    url: `https://fantasy.espn.com/baseball/team?leagueId=${leagueId}`,
+    url: `https://fantasy.espn.com/baseball/team?leagueId=${leagueId}${teamParam}`,
     active: false,
   });
   const tabId = tempTab.id;

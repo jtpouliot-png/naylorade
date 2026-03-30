@@ -127,11 +127,13 @@ syncBtn.addEventListener("click", async () => {
 // responses in localStorage. We poll until the data appears.
 async function fetchESPNLeagueData(leagueId) {
   const { teamId } = await chrome.storage.local.get("teamId");
+  const year = new Date().getFullYear();
   const teamParam = teamId ? `&teamId=${teamId}` : "";
-  const tempTab = await chrome.tabs.create({
-    url: `https://fantasy.espn.com/baseball/team?leagueId=${leagueId}${teamParam}`,
-    active: false,
-  });
+  // Use fantasycast page — confirmed to load real 2026 matchup + roster data
+  const url = teamId
+    ? `https://fantasy.espn.com/baseball/fantasycast?leagueId=${leagueId}&teamId=${teamId}&seasonId=${year}&matchupPeriodId=1`
+    : `https://fantasy.espn.com/baseball/team?leagueId=${leagueId}${teamParam}`;
+  const tempTab = await chrome.tabs.create({ url, active: false });
   const tabId = tempTab.id;
 
   try {
@@ -146,12 +148,13 @@ async function fetchESPNLeagueData(leagueId) {
         func: () => ({
           roster: localStorage.getItem("_espn_mRoster"),
           matchup: localStorage.getItem("_espn_mMatchupScore"),
+          draft: localStorage.getItem("_espn_mDraftDetail"),
         }),
       });
       const d = res?.[0]?.result;
-      if (d?.roster) {
+      if (d?.roster || d?.draft) {
         return {
-          rosterData: JSON.parse(d.roster),
+          rosterData: JSON.parse(d.roster || d.draft),
           matchupData: d.matchup ? JSON.parse(d.matchup) : null,
         };
       }
@@ -162,12 +165,18 @@ async function fetchESPNLeagueData(leagueId) {
       target: { tabId },
       world: "MAIN",
       func: () => {
-        const keys = [];
-        for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
-        return keys.join(" | ") || "(empty)";
+        const espnKeys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k.startsWith("_espn_")) espnKeys.push(k);
+        }
+        // Peek at mDraftDetail structure if present
+        const draft = localStorage.getItem("_espn_mDraftDetail");
+        const draftKeys = draft ? Object.keys(JSON.parse(draft)).join(",") : "none";
+        return `keys: ${espnKeys.join("|")} | mDraftDetail top-level: ${draftKeys}`;
       },
     }).catch(() => [{ result: "read failed" }]);
-    throw new Error(`Tab: ${tabInfo.url} — localStorage: ${lsRes?.[0]?.result}`);
+    throw new Error(`Tab: ${tabInfo.url} — ${lsRes?.[0]?.result}`);
   } finally {
     chrome.tabs.remove(tabId).catch(() => {});
   }

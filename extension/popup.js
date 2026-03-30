@@ -117,18 +117,16 @@ syncBtn.addEventListener("click", async () => {
   }
 });
 
-// ── Fetch ESPN league data via tab navigation (bypasses fetch/CORS issues) ────
+// ── Fetch ESPN league data via a hidden background tab ────────────────────────
+// Creates a temporary tab (never made active) to navigate ESPN API URLs.
+// The user's existing tabs are never touched.
 async function fetchESPNLeagueData(leagueId) {
-  const allTabs = await chrome.tabs.query({});
-  const espnTabs = allTabs.filter(t => t.url?.includes("fantasy.espn.com"));
-  if (!espnTabs.length) {
-    throw new Error("No fantasy.espn.com tab found — open fantasy.espn.com first, then try again.");
-  }
-
-  const tabId = espnTabs[0].id;
-  const originalUrl = espnTabs[0].url;
   const base = "https://fantasy.espn.com/apis/v3/games/flb/seasons";
   const year = new Date().getFullYear();
+
+  // Open a background tab — active:false keeps it behind the current tab
+  const tempTab = await chrome.tabs.create({ url: "about:blank", active: false });
+  const tabId = tempTab.id;
 
   async function navFetch(url) {
     await chrome.tabs.update(tabId, { url });
@@ -161,11 +159,7 @@ async function fetchESPNLeagueData(leagueId) {
 
     return { rosterData, matchupData: matchupData || null };
   } finally {
-    // Restore the ESPN tab to where it was and wait for it to finish loading
-    try {
-      await chrome.tabs.update(tabId, { url: originalUrl });
-      await waitForTabLoad(tabId);
-    } catch {}
+    chrome.tabs.remove(tabId).catch(() => {});
   }
 }
 

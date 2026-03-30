@@ -152,7 +152,16 @@ async function fetchESPNLeagueData(leagueId) {
     }
 
     const tabInfo = await chrome.tabs.get(tabId).catch(() => ({ url: "unknown" }));
-    throw new Error(`ESPN did not load roster data. Tab ended at: ${tabInfo.url}`);
+    const lsRes = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: () => {
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
+        return keys.join(" | ") || "(empty)";
+      },
+    }).catch(() => [{ result: "read failed" }]);
+    throw new Error(`Tab: ${tabInfo.url} — localStorage: ${lsRes?.[0]?.result}`);
   } finally {
     chrome.tabs.remove(tabId).catch(() => {});
   }

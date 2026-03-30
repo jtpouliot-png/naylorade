@@ -117,63 +117,41 @@ syncBtn.addEventListener("click", async () => {
   }
 });
 
-// ── Fetch ESPN league data via a hidden background tab ────────────────────────
-// Loads fantasy.espn.com in a background tab, then fetches API data using
-// the isolated world (native fetch, not ESPN's overridden one) with cookies.
+// ── Fetch ESPN league data by intercepting ESPN's own API calls ───────────────
+// Opens team page in a background tab. The save_fetch.js content script
+// (document_start, MAIN world) intercepts ESPN's own API calls and stores
+// responses in localStorage. We poll until the data appears.
 async function fetchESPNLeagueData(leagueId) {
-  const base = "https://fantasy.espn.com/apis/v3/games/flb/seasons";
-  const year = new Date().getFullYear();
-
-  // Load the ESPN Fantasy landing page so cookies + referer are established
-  const tempTab = await chrome.tabs.create({ url: "https://fantasy.espn.com/baseball/", active: false });
+  const tempTab = await chrome.tabs.create({
+    url: `https://fantasy.espn.com/baseball/team?leagueId=${leagueId}`,
+    active: false,
+  });
   const tabId = tempTab.id;
-  await waitForTabLoad(tabId);
-  const tabInfo = await chrome.tabs.get(tabId);
-  const tabFinalUrl = tabInfo.url;
-
-  // Use window.__nativeFetch saved at document_start before ESPN overrides fetch.
-  // Must run in MAIN world to access the saved reference.
-  async function apiFetch(url) {
-    const res = await chrome.scripting.executeScript({
-      target: { tabId },
-      world: "MAIN",
-      func: async (url) => {
-        // Unregister ESPN's service worker — it intercepts and blocks injected fetches
-        try {
-          const regs = await navigator.serviceWorker.getRegistrations();
-          await Promise.all(regs.map(r => r.unregister()));
-        } catch {}
-        const f = window.__nativeFetch || window.fetch;
-        try {
-          const r = await f(url, {
-            credentials: "include",
-            headers: { "Accept": "application/json" },
-          });
-          const t = await r.text();
-          return t.trim().startsWith("{") ? t : `ERR:${r.status}:${t.slice(0, 80)}`;
-        } catch (e) {
-          return `ERR:0:${e.message}`;
-        }
-      },
-      args: [url],
-    });
-    const raw = res?.[0]?.result || "";
-    if (raw.startsWith("ERR:")) return { data: null, err: raw };
-    return { data: JSON.parse(raw), err: null };
-  }
 
   try {
-    let roster = await apiFetch(`${base}/${year}/segments/0/leagues/${leagueId}?view=mRoster`);
-    if (!roster.data) roster = await apiFetch(`${base}/${year - 1}/segments/0/leagues/${leagueId}?view=mRoster`);
-    if (!roster.data) {
-      throw new Error(`Could not load ESPN roster data. Tab loaded at: ${tabFinalUrl} — ${roster.err}`);
+    await waitForTabLoad(tabId);
+
+    // Poll localStorage for data captured by the fetch interceptor (up to 15s)
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      const res = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: () => ({
+          roster: localStorage.getItem("_espn_mRoster"),
+          matchup: localStorage.getItem("_espn_mMatchupScore"),
+        }),
+      });
+      const d = res?.[0]?.result;
+      if (d?.roster) {
+        return {
+          rosterData: JSON.parse(d.roster),
+          matchupData: d.matchup ? JSON.parse(d.matchup) : null,
+        };
+      }
     }
 
-    const dataYear = roster.data.seasonId || year;
-    let matchup = await apiFetch(`${base}/${dataYear}/segments/0/leagues/${leagueId}?view=mMatchupScore`);
-    if (!matchup.data) matchup = await apiFetch(`${base}/${dataYear - 1}/segments/0/leagues/${leagueId}?view=mMatchupScore`);
-
-    return { rosterData: roster.data, matchupData: matchup.data || null };
+    throw new Error("ESPN did not load roster data in time — make sure you are logged into ESPN Fantasy.");
   } finally {
     chrome.tabs.remove(tabId).catch(() => {});
   }

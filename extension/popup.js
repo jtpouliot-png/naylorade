@@ -178,7 +178,7 @@ async function fetchESPNLeagueData(leagueId) {
             func: async (leagueId, year) => {
               const url = `https://fantasy.espn.com/apis/v3/games/flb/seasons/${year}/segments/0/leagues/${leagueId}?view=mRoster`;
               const resp = await fetch(url, { credentials: "include" });
-              return resp.ok ? resp.text() : null;
+              return resp.ok ? await resp.text() : null;
             },
             args: [leagueId, year],
           });

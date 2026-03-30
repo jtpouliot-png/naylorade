@@ -448,40 +448,44 @@ def fetch_player_news(player_name):
 # ── ESPN matchup ──────────────────────────────────────────────────────────────
 
 ESPN_STAT_MAP = {
+    # Confirmed from raw scoreByStat dump 2026-03-30
     0:  ("AB",   "At Bats",          False),
     1:  ("H",    "Hits",             False),
     2:  ("AVG",  "Batting Avg",      False),
-    3:  ("OBP",  "On-Base %",        False),
-    4:  ("SLG",  "Slugging %",       False),
+    3:  ("BB",   "Walks",            False),   # value=8 counting stat (was wrong: OBP)
     5:  ("HR",   "Home Runs",        False),
     6:  ("R",    "Runs",             False),
     7:  ("RBI",  "RBIs",             False),
     8:  ("BB",   "Walks",            False),
-    10: ("SO",   "K (Batter)",       True),
+    9:  ("OBP",  "On-Base %",        False),   # ESPN computed; confirmed 0.460
+    10: ("K",    "K (Batter)",       True),
     11: ("SB",   "Stolen Bases",     False),
     12: ("CS",   "Caught Stealing",  True),
-    14: ("OPS",  "OPS",              False),
-    17: ("OPS",  "OPS",              False),
+    13: ("HBP",  "Hit by Pitch",     False),
+    17: ("SLG",  "Slugging %",       False),   # ESPN computed; confirmed 0.390 (was OPS)
     20: ("R",    "Runs",             False),
     21: ("RBI",  "RBIs",             False),
     23: ("SB",   "Stolen Bases",     False),
+    24: ("TB",   "Total Bases",      False),
+    25: ("2B",   "Doubles",          False),
+    33: ("3B",   "Triples",          False),
     34: ("IP",   "Innings Pitched",  False),
     37: ("HA",   "Hits Allowed",     True),
     38: ("ER",   "Earned Runs",      True),
     39: ("BBA",  "BB Allowed",       True),
-    41: ("WHIP", "WHIP",             True),
+    41: ("WHIP", "WHIP",             True),    # confirmed 1.269
     45: ("W",    "Wins",             False),
     46: ("L",    "Losses",           True),
-    47: ("ERA",  "ERA",              True),
+    47: ("ERA",  "ERA",              True),    # confirmed 3.46
     48: ("K",    "Strikeouts",       False),
+    49: ("K/9",  "K per 9",          False),   # confirmed 10.73 (was mapped to 62)
     53: ("W",    "Wins",             False),
     54: ("L",    "Losses",           True),
     57: ("SV",   "Saves",            False),
-    62: ("K/9",  "K per 9",          False),
     63: ("QS",   "Quality Starts",   False),
-    64: ("ER",   "Earned Runs",      True),
     72: ("HLD",  "Holds",            False),
     74: ("NSV",  "Saves+Holds",      False),
+    83: ("HLD",  "Holds",            False),   # confirmed 3; one of 72/83 is the real one
 }
 
 # Rate stats computed from component counting stats (stat IDs)
@@ -517,44 +521,7 @@ def _aggregate_roster_stats(entries):
     return result
 
 
-def _sbs_score(sbs, stat_id):
-    """Get the numeric score for a stat_id from a scoreByStat dict."""
-    entry = sbs.get(str(stat_id))
-    return (entry.get("score") if isinstance(entry, dict) else entry) or 0
 
-
-def _fix_rate_stats(sbs):
-    """Compute rate stats ESPN stores as 0.0 from their counting stat components.
-    OBP and SLG come through as 0 in scoreByStat — compute from H/BB/AB etc.
-    Doubles=16, Triples=17 are best-guess IDs; raw_sbs log will confirm.
-    """
-    if not sbs:
-        return sbs
-
-    ab  = _sbs_score(sbs, 0)
-    h   = _sbs_score(sbs, 1)
-    bb  = _sbs_score(sbs, 8)
-    hr  = _sbs_score(sbs, 5)
-    db  = _sbs_score(sbs, 16)  # doubles — confirm via raw_sbs log
-    tb3 = _sbs_score(sbs, 17)  # triples — confirm via raw_sbs log
-
-    fixed = dict(sbs)
-
-    # OBP = (H + BB) / (AB + BB)  [simplified: ignores HBP and SF]
-    obp_entry = sbs.get("3")
-    if isinstance(obp_entry, dict) and not obp_entry.get("score"):
-        denom = ab + bb
-        if denom > 0:
-            fixed["3"] = {**obp_entry, "score": round((h + bb) / denom, 4)}
-
-    # SLG = TB / AB   where TB = H + 2B + 2×3B + 3×HR
-    slg_entry = sbs.get("4")
-    if isinstance(slg_entry, dict) and not slg_entry.get("score"):
-        total_bases = h + db + 2 * tb3 + 3 * hr
-        if ab > 0:
-            fixed["4"] = {**slg_entry, "score": round(total_bases / ab, 4)}
-
-    return fixed
 
 
 def _percentile(vals_by_team, team_id, is_reverse):
@@ -670,13 +637,13 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None, roster_a
             tid = side.get("teamId")
             if tid:
                 sbs = (side.get("cumulativeScore") or {}).get("scoreByStat") or {}
-                all_period_stats[tid] = _fix_rate_stats(sbs)
+                all_period_stats[tid] = sbs
 
     opp_team_id = (opp_side or {}).get("teamId")
     my_cumul  = (my_side  or {}).get("cumulativeScore") or {}
     opp_cumul = (opp_side or {}).get("cumulativeScore") or {}
-    my_sbs    = _fix_rate_stats(my_cumul.get("scoreByStat")  or {})
-    opp_sbs   = _fix_rate_stats(opp_cumul.get("scoreByStat") or {})
+    my_sbs    = my_cumul.get("scoreByStat")  or {}
+    opp_sbs   = opp_cumul.get("scoreByStat") or {}
 
     # Log all raw non-zero scores to help identify stat_ids for doubles/triples
     raw_my = my_cumul.get("scoreByStat") or {}

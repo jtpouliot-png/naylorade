@@ -11,7 +11,7 @@
   ],
   "content_scripts": [
     {
-      "matches": ["*://fantasy.espn.com/*"],
+      "matches": ["*://*.espn.com/*"],
       "js": ["save_fetch.js"],
       "run_at": "document_start",
       "world": "MAIN"

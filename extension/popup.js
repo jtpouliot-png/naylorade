@@ -151,7 +151,8 @@ async function fetchESPNLeagueData(leagueId) {
       }
     }
 
-    throw new Error("ESPN did not load roster data in time — make sure you are logged into ESPN Fantasy.");
+    const tabInfo = await chrome.tabs.get(tabId).catch(() => ({ url: "unknown" }));
+    throw new Error(`ESPN did not load roster data. Tab ended at: ${tabInfo.url}`);
   } finally {
     chrome.tabs.remove(tabId).catch(() => {});
   }

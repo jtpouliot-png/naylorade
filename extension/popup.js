@@ -96,7 +96,8 @@ syncBtn.addEventListener("click", async () => {
       ]);
       if (a && b) { s2Cookie = a; swidCookie = b; break; }
     }
-    const creds = { leagueId, espnS2: s2Cookie?.value || "", swid: swidCookie?.value || "" };
+    const { teamId } = await chrome.storage.local.get("teamId");
+    const creds = { leagueId, espnS2: s2Cookie?.value || "", swid: swidCookie?.value || "", teamId: teamId || null };
 
     // Fetch league data first (navigates ESPN tab to API URLs, then back)
     const espnData = await fetchESPNLeagueData(leagueId);
@@ -235,7 +236,7 @@ async function pushToNaylorade(players, appUrl, creds, espnData) {
         localStorage.setItem("naylorade_espn_creds", JSON.stringify(creds));
       }
       if (espnData) {
-        localStorage.setItem("naylorade_espn_data", JSON.stringify({ ...espnData, swid: creds?.swid }));
+        localStorage.setItem("naylorade_espn_data", JSON.stringify({ ...espnData, swid: creds?.swid, teamId: creds?.teamId }));
       }
       window.location.reload();
     },

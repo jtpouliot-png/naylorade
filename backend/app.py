@@ -532,18 +532,20 @@ def _percentile(vals_by_team, team_id, is_reverse):
     return round(below / (len(valid) - 1) * 100)
 
 
-def process_espn_matchup(roster_data, matchup_data, swid):
+def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
     """Process pre-fetched ESPN data (fetched in-browser by extension) into matchup analytics."""
 
     # scoringPeriodId and member/team info come from rosterData
     current_period = roster_data.get("scoringPeriodId", 1)
 
-    swid_clean = swid.strip("{}")
-    my_team_id = None
-    for member in roster_data.get("members", []):
-        if member.get("id", "").strip("{}") == swid_clean:
-            my_team_id = member.get("onTeamId")
-            break
+    # Use explicit teamId if provided, otherwise match via SWID
+    my_team_id = int(team_id) if team_id else None
+    if my_team_id is None:
+        swid_clean = swid.strip("{}")
+        for member in roster_data.get("members", []):
+            if member.get("id", "").strip("{}") == swid_clean:
+                my_team_id = member.get("onTeamId")
+                break
     if my_team_id is None and roster_data.get("teams"):
         my_team_id = roster_data["teams"][0]["id"]
 
@@ -743,12 +745,13 @@ def get_matchup():
     roster_data  = body.get("rosterData")
     matchup_data = body.get("matchupData")
     swid         = body.get("swid", "").strip()
+    team_id      = body.get("teamId")
 
     if not roster_data or not swid:
         return jsonify({"error": "rosterData and swid are required"}), 400
 
     try:
-        result = process_espn_matchup(roster_data, matchup_data, swid)
+        result = process_espn_matchup(roster_data, matchup_data, swid, team_id=team_id)
         if result is None:
             return jsonify({"error": "No active matchup found for this team"}), 404
         return jsonify(result)

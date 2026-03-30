@@ -106,7 +106,7 @@ export default function App() {
     try {
       const data = await apiFetch("/api/matchup", {
         method: "POST",
-        body: JSON.stringify({ rosterData: espnData.rosterData, matchupData: espnData.matchupData, swid: espnData.swid }),
+        body: JSON.stringify({ rosterData: espnData.rosterData, matchupData: espnData.matchupData, swid: espnData.swid, teamId: espnData.teamId }),
       });
       setMatchupData(data);
     } catch (e) {

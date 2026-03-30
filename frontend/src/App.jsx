@@ -621,17 +621,32 @@ function MatchupView({ data, loading, error, onRefresh, hasEspnData }) {
   const { wins = 0, losses = 0, ties = 0 } = record;
   const isWinning = wins > losses, isLosing = losses > wins;
 
-  const grouped = {
-    LOSS: categories.filter(c => c.result === "LOSS"),
-    TIE:  categories.filter(c => c.result === "TIE"),
-    WIN:  categories.filter(c => c.result === "WIN"),
-  };
+  // League scoring categories in display order
+  const LEAGUE_ORDER = ['R', 'HR', 'RBI', 'SB', 'OBP', 'SLG', 'QS', 'W', 'ERA', 'WHIP', 'K/9', 'SVHD'];
+  const LEAGUE_SET = new Set(LEAGUE_ORDER);
+  const catByAbbr = Object.fromEntries(categories.map(c => [c.abbr, c]));
+  const leagueCats = LEAGUE_ORDER.map(a => catByAbbr[a]).filter(Boolean);
+  const otherCats  = categories.filter(c => !LEAGUE_SET.has(c.abbr));
 
+  const grouped = {
+    LOSS: leagueCats.filter(c => c.result === "LOSS"),
+    TIE:  leagueCats.filter(c => c.result === "TIE"),
+    WIN:  leagueCats.filter(c => c.result === "WIN"),
+  };
   const sections = [
     { label: "Need to improve", cats: grouped.LOSS, accent: "#9b2226" },
     { label: "Too close to call", cats: grouped.TIE,  accent: "var(--text-muted)" },
     { label: "Winning",          cats: grouped.WIN,  accent: "#2d6a4f" },
   ].filter(s => s.cats.length > 0);
+
+  const leagueWeekCats = LEAGUE_ORDER.map(a => leagueWeekStats?.find(s => s.abbr === a)).filter(Boolean);
+  const otherWeekStats = leagueWeekStats?.filter(s => !LEAGUE_SET.has(s.abbr));
+
+  const colHeader = (label, right) => (
+    <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)", textAlign: right ? "right" : "left", paddingRight: right ? 10 : 0, paddingLeft: right ? 0 : 10 }}>
+      {label}
+    </div>
+  );
 
   return (
     <div style={{ padding: "24px 32px", maxWidth: 680 }}>
@@ -661,19 +676,13 @@ function MatchupView({ data, loading, error, onRefresh, hasEspnData }) {
         </div>
       </div>
 
-      {/* Column headers */}
+      {/* League scoring categories */}
       <div style={{ display: "grid", gridTemplateColumns: "130px 1fr 44px 1fr", padding: "6px 16px", background: "var(--bg)", border: "1px solid var(--border)", borderBottom: "none", borderRadius: "4px 4px 0 0" }}>
         <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)" }}>Category</div>
-        <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)", textAlign: "right", paddingRight: 10 }}>
-          You
-        </div>
+        {colHeader("You", true)}
         <div />
-        <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)", paddingLeft: 10 }}>
-          Opp
-        </div>
+        {colHeader("Opp", false)}
       </div>
-
-      {/* Category sections */}
       <div style={{ border: "1px solid var(--border)", borderRadius: "0 0 4px 4px", overflow: "hidden" }}>
         {sections.map((section, si) => (
           <div key={section.label}>
@@ -692,7 +701,28 @@ function MatchupView({ data, loading, error, onRefresh, hasEspnData }) {
         <span style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: 4 }}>wk = this week vs league · szn = full season vs league</span>
       </div>
 
-      <LeagueRankings stats={leagueWeekStats} myTeamId={myTeam.id} oppTeamId={opponent.id} />
+      <LeagueRankings stats={leagueWeekCats} myTeamId={myTeam.id} oppTeamId={opponent.id} />
+
+      {/* Other stats */}
+      {otherCats.length > 0 && (
+        <div style={{ marginTop: 28 }}>
+          <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 8 }}>Other Stats</div>
+          <div style={{ display: "grid", gridTemplateColumns: "130px 1fr 44px 1fr", padding: "6px 16px", background: "var(--bg)", border: "1px solid var(--border)", borderBottom: "none", borderRadius: "4px 4px 0 0" }}>
+            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)" }}>Stat</div>
+            {colHeader("You", true)}
+            <div />
+            {colHeader("Opp", false)}
+          </div>
+          <div style={{ border: "1px solid var(--border)", borderRadius: "0 0 4px 4px", overflow: "hidden" }}>
+            {otherCats.map((cat, i) => (
+              <CategoryRow key={cat.statId} cat={cat} isLast={i === otherCats.length - 1} />
+            ))}
+          </div>
+          {otherWeekStats?.length > 0 && (
+            <LeagueRankings stats={otherWeekStats} myTeamId={myTeam.id} oppTeamId={opponent.id} />
+          )}
+        </div>
+      )}
     </div>
   );
 }

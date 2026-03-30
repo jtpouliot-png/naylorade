@@ -151,6 +151,7 @@ async function fetchESPNLeagueData(leagueId) {
         func: () => ({
           roster: localStorage.getItem("_espn_mRoster"),
           matchup: localStorage.getItem("_espn_mMatchupScore")
+               || localStorage.getItem("_espn_mMatchup")
                || localStorage.getItem("_espn_mBoxscore")
                || localStorage.getItem("_espn_mLiveScoring"),
           draft: localStorage.getItem("_espn_mDraftDetail"),

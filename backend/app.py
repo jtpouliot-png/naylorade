@@ -463,7 +463,7 @@ ESPN_STAT_MAP = {
     11: ("SB",   "Stolen Bases",     False),
     12: ("CS",   "Caught Stealing",  True),
     13: ("HBP",  "Hit by Pitch",     False),
-    17: ("BAA",  "Avg Allowed",      True),    # pitching stat ~0.390; lower is better
+    17: ("OPS",  "OPS",               False),   # ~0.390 seen in raw; ESPN field unclear
     20: ("R",    "Runs",             False),
     21: ("RBI",  "RBIs",             False),
     23: ("SB",   "Stolen Bases",     False),
@@ -475,7 +475,7 @@ ESPN_STAT_MAP = {
     38: ("ER",   "Earned Runs",      True),
     39: ("BBA",  "BB Allowed",       True),
     41: ("WHIP", "WHIP",             True),    # confirmed 1.269
-    45: ("W",    "Wins",             False),
+    45: ("APP",  "Pitcher App.",      False),  # was mislabeled W; stat_id 53 is the real W
     46: ("L",    "Losses",           True),
     47: ("ERA",  "ERA",              True),    # confirmed 3.46
     48: ("K",    "Strikeouts",       False),
@@ -526,29 +526,36 @@ def _aggregate_roster_stats(entries):
 
 
 def _fix_rate_stats(sbs):
-    """Compute SLG from counting components — ESPN stores stat_id 4 (SLG) as 0
-    or omits it entirely for non-user matchups. Compute for all teams with AB data.
-    Confirmed stat_ids: AB=0, H=1, HR=5, 2B=25, 3B=24. OBP (9) is fine as-is.
+    """Compute stats ESPN stores as 0 or omits:
+    - SLG (stat_id 4): computed from AB/H/2B/3B/HR components
+    - SVHD (stat_id 74): computed as SV (57) + HLD (83)
     """
-    slg_entry = sbs.get("4")
-    # Skip only if ESPN already provided a non-zero SLG
-    if isinstance(slg_entry, dict) and slg_entry.get("score"):
-        return sbs
-
     def s(sid):
         e = sbs.get(str(sid))
         return (e.get("score") if isinstance(e, dict) else e) or 0
 
-    ab = s(0)
-    if not ab:
-        return sbs  # no at-bats, can't compute
+    result = dict(sbs)
 
-    h, hr = s(1), s(5)
-    doubles, triples = s(25), s(24)
-    # TB = H + 2B + 2×3B + 3×HR
-    total_bases = h + doubles + 2 * triples + 3 * hr
-    base = slg_entry if isinstance(slg_entry, dict) else {}
-    return {**sbs, "4": {**base, "score": round(total_bases / ab, 4)}}
+    # ── SLG ──────────────────────────────────────────────────────────────────────
+    slg_entry = sbs.get("4")
+    if not (isinstance(slg_entry, dict) and slg_entry.get("score")):
+        ab = s(0)
+        if ab:
+            h, hr = s(1), s(5)
+            doubles, triples = s(25), s(24)
+            total_bases = h + doubles + 2 * triples + 3 * hr
+            base = slg_entry if isinstance(slg_entry, dict) else {}
+            result["4"] = {**base, "score": round(total_bases / ab, 4)}
+
+    # ── SVHD ─────────────────────────────────────────────────────────────────────
+    svhd_entry = sbs.get("74")
+    if not (isinstance(svhd_entry, dict) and svhd_entry.get("score")):
+        sv, hld = s(57), s(83)
+        if sv or hld:
+            base = svhd_entry if isinstance(svhd_entry, dict) else {}
+            result["74"] = {**base, "score": sv + hld}
+
+    return result
 
 
 def _percentile(vals_by_team, team_id, is_reverse):

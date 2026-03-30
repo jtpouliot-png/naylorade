@@ -56,7 +56,10 @@ async function checkESPNCookies() {
 async function detectLeagueId() {
   try {
     const allTabs = await chrome.tabs.query({});
-    const espnTab = allTabs.find(t => t.url?.includes("espn.com") && t.url?.includes("leagueId="));
+    const espnTabs = allTabs.filter(t => t.url?.includes("espn.com") && t.url?.includes("leagueId="));
+    // Prefer the /team page (has the user's own teamId) over fantasycast (shows opponent's teamId)
+    const espnTab = espnTabs.find(t => t.url?.includes("/team?") || t.url?.includes("/team&"))
+                 || espnTabs[0];
     const url = espnTab?.url || "";
     const leagueMatch = url.match(/leagueId=(\d+)/);
     const teamMatch = url.match(/teamId=(\d+)/);

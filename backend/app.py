@@ -535,28 +535,55 @@ def _percentile(vals_by_team, team_id, is_reverse):
 def process_espn_matchup(roster_data, matchup_data, swid, team_id=None):
     """Process pre-fetched ESPN data (fetched in-browser by extension) into matchup analytics."""
 
-    # scoringPeriodId and member/team info come from rosterData
-    current_period = roster_data.get("scoringPeriodId", 1)
+    # Get scoringPeriodId from either source
+    current_period = (roster_data.get("scoringPeriodId")
+                      or (matchup_data or {}).get("scoringPeriodId")
+                      or 1)
 
-    # Use explicit teamId if provided, otherwise match via SWID
+    swid_clean = swid.strip("{}")
+
+    # Find the user's teamId via multiple strategies
     my_team_id = int(team_id) if team_id else None
+
+    # Strategy 2: match SWID in members list
     if my_team_id is None:
-        swid_clean = swid.strip("{}")
         for member in roster_data.get("members", []):
             if member.get("id", "").strip("{}") == swid_clean:
                 my_team_id = member.get("onTeamId")
                 break
+
+    # Strategy 3: match primaryOwner on teams
+    if my_team_id is None:
+        for t in roster_data.get("teams", []):
+            owner = t.get("primaryOwner", "").strip("{}")
+            if owner == swid_clean:
+                my_team_id = t.get("id")
+                break
+
     if my_team_id is None and roster_data.get("teams"):
         my_team_id = roster_data["teams"][0]["id"]
 
+    # Build team name map — try location+nickname, fall back to member name, then "Team N"
+    member_names = {}
+    for m in roster_data.get("members", []):
+        tid = m.get("onTeamId")
+        name = m.get("displayName") or f"{m.get('firstName','')} {m.get('lastName','')}".strip()
+        if tid and name:
+            member_names[tid] = name
+
     team_map = {}
-    for t in roster_data.get("teams", []):
-        tid = t.get("id")
-        if tid is None:
-            continue
-        loc  = t.get("location", "")
-        nick = t.get("nickname", "")
-        team_map[tid] = (f"{loc} {nick}".strip()) or f"Team {tid}"
+    for src in [roster_data, matchup_data or {}]:
+        for t in src.get("teams", []):
+            tid = t.get("id")
+            if tid is None:
+                continue
+            loc  = t.get("location", "")
+            nick = t.get("nickname", "")
+            name = f"{loc} {nick}".strip()
+            if tid not in team_map or not team_map[tid] or team_map[tid].startswith("Team "):
+                team_map[tid] = name or member_names.get(tid) or f"Team {tid}"
+
+    print(f"my_team_id={my_team_id} period={current_period} teams={list(team_map.items())[:4]}", flush=True)
 
     # Matchup scoring comes from matchupData if available, fall back to rosterData
     schedule_source = matchup_data if (matchup_data and matchup_data.get("schedule")) else roster_data

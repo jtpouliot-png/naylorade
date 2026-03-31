@@ -420,25 +420,29 @@ def _parse_stat(stats_dict, key, digits=3):
 
 
 def _mlb_stats(ids, stat_type, group, year, extra=None):
-    """Fetch MLB /api/v1/stats for a list of player IDs. Returns {playerId: statDict}."""
-    params = {
-        "stats":     stat_type,
-        "group":     group,
-        "season":    year,
-        "gameType":  "R",
-        "playerIds": ",".join(str(i) for i in ids),
-    }
+    """Fetch MLB stats via /api/v1/people hydrate — single group per call to avoid 500.
+    Returns {playerId: statDict}."""
+    hydrate_parts = f"group={group},type={stat_type},season={year},gameType=R"
     if extra:
-        params.update(extra)
+        for k, v in extra.items():
+            hydrate_parts += f",{k}={v}"
+    params = {
+        "personIds": ",".join(str(i) for i in ids),
+        "hydrate":   f"stats({hydrate_parts})",
+    }
     try:
-        r = requests.get(f"{MLB_BASE}/stats", params=params, timeout=15)
+        r = requests.get(f"{MLB_BASE}/people", params=params, timeout=15)
         r.raise_for_status()
         result = {}
-        for sg in r.json().get("stats", []):
-            for split in sg.get("splits", []):
-                pid = (split.get("player") or {}).get("id")
-                if pid:
-                    result[pid] = split.get("stat", {})
+        for person in r.json().get("people", []):
+            pid = person.get("id")
+            if not pid:
+                continue
+            for sg in person.get("stats", []):
+                splits = sg.get("splits", [])
+                if splits:
+                    result[pid] = splits[0].get("stat", {})
+                    break
         return result
     except Exception as e:
         print(f"MLB stats {stat_type}/{group}: {e}", flush=True)
@@ -447,7 +451,7 @@ def _mlb_stats(ids, stat_type, group, year, extra=None):
 
 def _fetch_player_stats(player_names):
     """Return {name: {season:{...}, lastSeven:{...}, isPitcher}} from MLB API.
-    Uses /api/v1/stats endpoint (more reliable than /people hydrate). Cached 30 min."""
+    Uses /api/v1/people?hydrate=stats(...) — one stat group per call. Cached 30 min."""
     now  = time.time()
     mlb  = _get_mlb_players()
     norm = _mlb_players_cache.get("norm", {})

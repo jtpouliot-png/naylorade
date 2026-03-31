@@ -4,6 +4,7 @@ import requests
 from datetime import date, datetime, timedelta, timezone
 import xml.etree.ElementTree as ET
 import time
+import unicodedata
 from email.utils import parsedate_to_datetime
 
 app = Flask(__name__)
@@ -317,8 +318,13 @@ def get_players_in_game(game_id, roster_names):
 
 # ── Weekly schedule + player→team mapping ────────────────────────────────────
 
-_mlb_players_cache = {"ts": 0, "data": {}}
+_mlb_players_cache = {"ts": 0, "data": {}, "norm": {}}  # norm: ascii-normalized name → canonical name
 MLB_PLAYERS_TTL = 6 * 60 * 60  # 6 hours
+
+
+def _ascii(name):
+    """Strip accents: 'Julio Rodríguez' → 'Julio Rodriguez'."""
+    return unicodedata.normalize("NFD", name).encode("ascii", "ignore").decode("ascii").lower()
 
 _week_sched_cache = {"ts": 0, "week_start": None, "data": []}
 WEEK_SCHED_TTL = 30 * 60  # 30 min
@@ -337,14 +343,15 @@ def _get_mlb_players():
             timeout=15,
         )
         resp.raise_for_status()
-        result = {}
+        result, norm = {}, {}
         for p in resp.json().get("people", []):
             name    = p.get("fullName", "")
             team_id = (p.get("currentTeam") or {}).get("id")
             pid     = p.get("id")
             if name and pid:
                 result[name] = {"id": pid, "teamId": team_id}
-        _mlb_players_cache.update({"ts": now, "data": result})
+                norm[_ascii(name)] = name  # accent-stripped fallback key
+        _mlb_players_cache.update({"ts": now, "data": result, "norm": norm})
         print(f"MLB players loaded: {len(result)}", flush=True)
         return result
     except Exception as e:
@@ -417,21 +424,30 @@ def _fetch_player_stats(player_names):
     Fetches in batches of 20; caches per-player for 30 min."""
     now   = time.time()
     mlb   = _get_mlb_players()
+    norm  = _mlb_players_cache.get("norm", {})
     fresh, stale = {}, []
 
+    not_found = []
     for name in player_names:
         cached = _player_stats_cache.get(name)
         if cached and now - cached["ts"] < PLAYER_STATS_TTL:
             fresh[name] = cached["data"]
-        elif mlb.get(name, {}).get("id"):
-            stale.append(name)
+            continue
+        # Exact match first, then accent-stripped fallback
+        info = mlb.get(name) or mlb.get(norm.get(_ascii(name), ""))
+        if info and info.get("id"):
+            stale.append((name, info["id"]))
+        else:
+            not_found.append(name)
 
+    if not_found:
+        print(f"player-stats not found in MLB lookup ({len(not_found)}): {not_found[:8]}", flush=True)
     if not stale:
         return fresh
 
     # Batch by 20 IDs
-    id_map = {mlb[n]["id"]: n for n in stale}
-    chunks = [list(id_map.keys())[i:i+20] for i in range(0, len(id_map), 20)]
+    all_ids = list(id_map.keys())
+    chunks = [all_ids[i:i+20] for i in range(0, len(all_ids), 20)]
     year   = date.today().year
 
     for chunk in chunks:
@@ -449,7 +465,12 @@ def _fetch_player_stats(player_names):
                 timeout=20,
             )
             resp.raise_for_status()
-            for person in resp.json().get("people", []):
+            people = resp.json().get("people", [])
+            print(f"player-stats batch {len(chunk)} ids → {len(people)} people returned", flush=True)
+            if people:
+                sample = people[0]
+                print(f"  sample name={sample.get('fullName')} stats_groups={[s.get('type',{}).get('displayName') for s in (sample.get('stats') or [])]}", flush=True)
+            for person in people:
                 pid  = person.get("id")
                 name = id_map.get(pid)
                 if not name:

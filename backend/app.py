@@ -458,16 +458,18 @@ def _fetch_player_stats(player_names):
                 pos  = (person.get("primaryPosition") or {}).get("abbreviation", "")
                 is_p = pos in ("SP", "RP", "P")
 
-                # Parse stats groups
+                # Parse stats groups — MLB API returns "Season" / "Last X Games" (mixed case)
                 season_hit, season_pit, l7_hit, l7_pit = {}, {}, {}, {}
                 for sg in person.get("stats") or []:
-                    grp   = (sg.get("group") or {}).get("displayName", "")
-                    typ   = (sg.get("type")  or {}).get("displayName", "")
-                    stats = (sg.get("splits") or [{}])[0].get("stat", {})
-                    if typ == "season"      and grp == "hitting":  season_hit = stats
-                    elif typ == "season"    and grp == "pitching": season_pit = stats
-                    elif typ == "lastXGames" and grp == "hitting":  l7_hit    = stats
-                    elif typ == "lastXGames" and grp == "pitching": l7_pit    = stats
+                    grp  = (sg.get("group") or {}).get("displayName", "").lower()
+                    typ  = (sg.get("type")  or {}).get("displayName", "").lower()
+                    stat = (sg.get("splits") or [{}])[0].get("stat", {})
+                    is_szn = "season" in typ and "last" not in typ
+                    is_l7  = "last"   in typ
+                    if is_szn and grp == "hitting":   season_hit = stat
+                    elif is_szn and grp == "pitching": season_pit = stat
+                    elif is_l7  and grp == "hitting":  l7_hit     = stat
+                    elif is_l7  and grp == "pitching": l7_pit     = stat
 
                 if is_p:
                     data = {
@@ -735,8 +737,12 @@ def _aggregate_roster_stats(entries):
 
 def _get_team_players(source_data, team_id):
     """Extract player names + ESPN position IDs for a team from roster data."""
-    for team in source_data.get("teams", []):
-        if team.get("id") == team_id:
+    if team_id is None:
+        return []
+    tid = int(team_id)
+    teams = source_data.get("teams", [])
+    for team in teams:
+        if int(team.get("id", -1)) == tid:
             entries = (team.get("roster") or {}).get("entries", [])
             result = []
             for e in entries:
@@ -748,7 +754,9 @@ def _get_team_players(source_data, team_id):
                         "name":       name,
                         "positionId": player.get("defaultPositionId"),
                     })
+            print(f"_get_team_players tid={tid} → {len(result)} players", flush=True)
             return result
+    print(f"_get_team_players tid={tid} not found in {[t.get('id') for t in teams[:6]]}", flush=True)
     return []
 
 

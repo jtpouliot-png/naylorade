@@ -831,8 +831,17 @@ function RosterTab({ myPlayers, oppPlayers, stats, loading }) {
   }[t]);
 
   function PlayerTable({ players, label }) {
-    const pitchers = players.filter(p => (stats?.[p.name] || {}).isPitcher);
-    const batters  = players.filter(p => !(stats?.[p.name] || {}).isPitcher);
+    if (!players.length) return (
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 8 }}>{label}</div>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", padding: "12px 0" }}>Roster not available — re-sync the extension to load opponent data.</div>
+      </div>
+    );
+
+    // Classify by MLB position from stats if available, fall back to ESPN positionId
+    const isPitcherPos = id => id != null && [11, 12, 13].includes(Number(id));
+    const pitchers = players.filter(p => (stats?.[p.name]?.isPitcher) || (!stats?.[p.name] && isPitcherPos(p.positionId)));
+    const batters  = players.filter(p => !(stats?.[p.name]?.isPitcher) && !(!stats?.[p.name] && isPitcherPos(p.positionId)));
 
     const hitterRow = (p) => {
       const s = stats?.[p.name];

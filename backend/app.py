@@ -1002,14 +1002,17 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None, roster_a
                         pass
         # Recompute rate stats from accumulated counting-stat components
         for s in all_season_stats.values():
-            ab, h  = s.get(0, 0), s.get(1, 0)
-            ip     = s.get(34, 0)
-            ha, bba = s.get(37, 0), s.get(39, 0)
-            er, k  = s.get(38, 0), s.get(48, 0)
-            if ab: s[2]  = round(h / ab, 4)
-            if ip: s[41] = round((ha + bba) / ip, 4)
-            if ip: s[47] = round(9 * er / ip, 2)
-            if ip: s[49] = round(9 * k / ip, 2)
+            ab, h       = s.get(0, 0), s.get(1, 0)
+            ip          = s.get(34, 0)
+            ha, bba     = s.get(37, 0), s.get(39, 0)
+            er, k       = s.get(38, 0), s.get(48, 0)
+            doubles     = s.get(25, 0)
+            triples, hr = s.get(24, 0), s.get(5, 0)
+            if ab: s[2]  = round(h / ab, 4)                                  # AVG
+            if ab: s[4]  = round((h + doubles + 2*triples + 3*hr) / ab, 4)   # SLG
+            if ip: s[41] = round((ha + bba) / ip, 4)                         # WHIP
+            if ip: s[47] = round(9 * er / ip, 2)                             # ERA
+            if ip: s[49] = round(9 * k / ip, 2)                              # K/9
         print(f"all_season_stats fallback: {len(all_season_stats)} teams from schedule", flush=True)
 
     all_stat_id_strs = set(my_sbs.keys()) | set(opp_sbs.keys())

@@ -39,6 +39,10 @@ export default function App() {
   const [matchupData, setMatchupData] = useState(null);
   const [matchupLoading, setMatchupLoading] = useState(false);
   const [matchupError, setMatchupError] = useState(null);
+  const [rosterStats, setRosterStats] = useState(null);
+  const [rosterStatsLoading, setRosterStatsLoading] = useState(false);
+  const [scheduleData, setScheduleData] = useState(null);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
 
   const loadHistoricalPlays = useCallback(async (currentGames, currentRoster) => {
     const relevantGames = currentGames.filter(g => g.status === "Live" || g.status === "Final");
@@ -114,6 +118,31 @@ export default function App() {
     } finally {
       setMatchupLoading(false);
     }
+  }, []);
+
+  const loadRosterStats = useCallback(async (myPlayers, oppPlayers) => {
+    const allNames = [
+      ...myPlayers.map(p => typeof p === "object" ? p.name : p),
+      ...oppPlayers.map(p => typeof p === "object" ? p.name : p),
+    ].filter(Boolean);
+    if (!allNames.length) return;
+    setRosterStatsLoading(true);
+    try {
+      const data = await apiFetch(`/api/player-stats?players=${encodeURIComponent(allNames.join(","))}`);
+      setRosterStats(data.stats || {});
+    } catch { } finally {
+      setRosterStatsLoading(false);
+    }
+  }, []);
+
+  const loadSchedule = useCallback(async (myPlayers, oppPlayers) => {
+    const myParam  = myPlayers.map(p => typeof p === "object" ? p.name : p).join(",");
+    const oppParam = oppPlayers.map(p => typeof p === "object" ? p.name : p).join(",");
+    if (!myParam) return;
+    try {
+      const data = await apiFetch(`/api/week-schedule?myPlayers=${encodeURIComponent(myParam)}&oppPlayers=${encodeURIComponent(oppParam)}`);
+      setScheduleData(data);
+    } catch { }
   }, []);
 
   async function requestNotifications() {
@@ -329,6 +358,12 @@ export default function App() {
               error={matchupError}
               onRefresh={loadMatchup}
               hasEspnData={!!storage("naylorade_espn_data")?.rosterData}
+              rosterStats={rosterStats}
+              rosterStatsLoading={rosterStatsLoading}
+              scheduleData={scheduleData}
+              scheduleLoading={scheduleLoading}
+              onLoadRosterStats={() => matchupData && loadRosterStats(matchupData.myPlayers || [], matchupData.oppPlayers || [])}
+              onLoadSchedule={() => matchupData && loadSchedule(matchupData.myPlayers || [], matchupData.oppPlayers || [])}
             />
           </div>
         )}
@@ -594,7 +629,14 @@ function LeagueRankings({ stats, myTeamId, oppTeamId }) {
   );
 }
 
-function MatchupView({ data, loading, error, onRefresh, hasEspnData }) {
+function MatchupView({ data, loading, error, onRefresh, hasEspnData, rosterStats, rosterStatsLoading, scheduleData, scheduleLoading, onLoadRosterStats, onLoadSchedule }) {
+  const [activeTab, setActiveTab] = useState("matchup");
+
+  function switchTab(tab) {
+    setActiveTab(tab);
+    if (tab === "roster"   && !rosterStats   && !rosterStatsLoading) onLoadRosterStats();
+    if (tab === "schedule" && !scheduleData  && !scheduleLoading)    onLoadSchedule();
+  }
   if (!hasEspnData && !data && !loading) return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "60vh", gap: 12 }}>
       <div style={{ fontSize: 28 }}>📊</div>
@@ -676,6 +718,33 @@ function MatchupView({ data, loading, error, onRefresh, hasEspnData }) {
         </div>
       </div>
 
+      {/* Tab bar */}
+      <div style={{ display: "flex", borderBottom: "1px solid var(--border)", marginBottom: 20, gap: 0 }}>
+        {[["matchup", "Matchup"], ["roster", "Roster"], ["schedule", "Schedule"]].map(([tab, label]) => (
+          <button key={tab} onClick={() => switchTab(tab)} style={{
+            padding: "8px 16px", fontSize: 12, fontWeight: activeTab === tab ? 600 : 400,
+            color: activeTab === tab ? "var(--text-primary)" : "var(--text-muted)",
+            background: "none", border: "none", cursor: "pointer",
+            borderBottom: activeTab === tab ? "2px solid var(--text-primary)" : "2px solid transparent",
+            marginBottom: -1,
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {activeTab === "roster" && (
+        <RosterTab
+          myPlayers={data.myPlayers || []}
+          oppPlayers={data.oppPlayers || []}
+          stats={rosterStats}
+          loading={rosterStatsLoading}
+        />
+      )}
+      {activeTab === "schedule" && (
+        <ScheduleTab data={scheduleData} loading={scheduleLoading} />
+      )}
+      {activeTab !== "matchup" && null}
+      {activeTab === "matchup" && <>
+
       {/* League scoring categories */}
       <div style={{ display: "grid", gridTemplateColumns: "130px 1fr 44px 1fr", padding: "6px 16px", background: "var(--bg)", border: "1px solid var(--border)", borderBottom: "none", borderRadius: "4px 4px 0 0" }}>
         <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)" }}>Category</div>
@@ -723,6 +792,234 @@ function MatchupView({ data, loading, error, onRefresh, hasEspnData }) {
           )}
         </div>
       )}
+      </>}
+    </div>
+  );
+}
+
+// ── Roster tab — season stats + L7 trends ────────────────────────────────────
+
+function RosterTab({ myPlayers, oppPlayers, stats, loading }) {
+  if (loading) return <div style={{ padding: 40, textAlign: "center" }}><span className="spinner" /></div>;
+  if (!stats && !loading) return <div style={{ padding: "20px 0", fontSize: 12, color: "var(--text-muted)" }}>Loading player stats…</div>;
+
+  const fmt = (v, d = 3) => v == null ? "—" : (d === 0 ? Math.round(v) : Number(v).toFixed(d));
+  const fmtAvg = v => v == null ? "—" : Number(v).toFixed(3).replace(/^0/, "");
+
+  // Trend: compare L7 to season for a key metric. Returns "hot" | "cold" | "neutral"
+  function trend(playerStats) {
+    if (!playerStats) return "neutral";
+    const { season, lastSeven, isPitcher } = playerStats;
+    if (isPitcher) {
+      const sEra = season?.era, lEra = lastSeven?.era;
+      if (sEra == null || lEra == null) return "neutral";
+      if (lEra < sEra * 0.8) return "hot";
+      if (lEra > sEra * 1.25) return "cold";
+    } else {
+      const sOps = season?.ops, lOps = lastSeven?.ops;
+      if (sOps == null || lOps == null) return "neutral";
+      if (lOps > sOps + 0.080) return "hot";
+      if (lOps < sOps - 0.080) return "cold";
+    }
+    return "neutral";
+  }
+
+  const trendDot = t => ({
+    hot:     <span style={{ color: "#2d6a4f", fontWeight: 700, fontSize: 11 }}>↑</span>,
+    cold:    <span style={{ color: "#9b2226", fontWeight: 700, fontSize: 11 }}>↓</span>,
+    neutral: <span style={{ color: "var(--text-muted)", fontSize: 11 }}>–</span>,
+  }[t]);
+
+  function PlayerTable({ players, label }) {
+    const pitchers = players.filter(p => (stats?.[p.name] || {}).isPitcher);
+    const batters  = players.filter(p => !(stats?.[p.name] || {}).isPitcher);
+
+    const hitterRow = (p) => {
+      const s = stats?.[p.name];
+      const szn = s?.season || {};
+      const l7  = s?.lastSeven || {};
+      const t   = trend(s);
+      return (
+        <div key={p.name} style={{ display: "grid", gridTemplateColumns: "130px 32px 52px 36px 36px 36px 52px 52px 28px", alignItems: "center", padding: "5px 12px", borderBottom: "1px solid var(--border)", fontSize: 11 }}>
+          <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{p.name.split(" ").slice(-1)[0]}</div>
+          <div style={{ textAlign: "right", color: "var(--text-muted)", fontSize: 10 }}>{s?.position || p.positionId}</div>
+          <div style={{ textAlign: "right" }}>{fmtAvg(szn.avg)}</div>
+          <div style={{ textAlign: "right" }}>{fmt(szn.hr, 0)}</div>
+          <div style={{ textAlign: "right" }}>{fmt(szn.rbi, 0)}</div>
+          <div style={{ textAlign: "right" }}>{fmt(szn.sb, 0)}</div>
+          <div style={{ textAlign: "right", color: "var(--text-muted)" }}>{fmtAvg(l7.avg)}</div>
+          <div style={{ textAlign: "right", color: "var(--text-muted)" }}>{l7.ops != null ? fmtAvg(l7.ops) : "—"}</div>
+          <div style={{ textAlign: "center" }}>{trendDot(t)}</div>
+        </div>
+      );
+    };
+
+    const pitcherRow = (p) => {
+      const s = stats?.[p.name];
+      const szn = s?.season || {};
+      const l7  = s?.lastSeven || {};
+      const t   = trend(s);
+      return (
+        <div key={p.name} style={{ display: "grid", gridTemplateColumns: "130px 32px 48px 52px 52px 48px 52px 52px 28px", alignItems: "center", padding: "5px 12px", borderBottom: "1px solid var(--border)", fontSize: 11 }}>
+          <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{p.name.split(" ").slice(-1)[0]}</div>
+          <div style={{ textAlign: "right", color: "var(--text-muted)", fontSize: 10 }}>{s?.position || "P"}</div>
+          <div style={{ textAlign: "right" }}>{fmt(szn.era)}</div>
+          <div style={{ textAlign: "right" }}>{fmt(szn.whip)}</div>
+          <div style={{ textAlign: "right" }}>{fmt(szn.k9)}</div>
+          <div style={{ textAlign: "right" }}>{fmt(szn.wins, 0)}</div>
+          <div style={{ textAlign: "right", color: "var(--text-muted)" }}>{fmt(l7.era)}</div>
+          <div style={{ textAlign: "right", color: "var(--text-muted)" }}>{fmt(l7.whip)}</div>
+          <div style={{ textAlign: "center" }}>{trendDot(t)}</div>
+        </div>
+      );
+    };
+
+    const hdrStyle = { fontSize: 9, fontWeight: 600, letterSpacing: "0.06em", color: "var(--text-muted)", textAlign: "right", textTransform: "uppercase" };
+
+    return (
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 8 }}>{label}</div>
+
+        {batters.length > 0 && (
+          <div style={{ border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden", marginBottom: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "130px 32px 52px 36px 36px 36px 52px 52px 28px", padding: "5px 12px", background: "var(--bg)", borderBottom: "1px solid var(--border)" }}>
+              <div style={{ ...hdrStyle, textAlign: "left" }}>Batter</div>
+              <div />
+              <div style={hdrStyle}>AVG</div>
+              <div style={hdrStyle}>HR</div>
+              <div style={hdrStyle}>RBI</div>
+              <div style={hdrStyle}>SB</div>
+              <div style={{ ...hdrStyle, color: "var(--text-muted)", opacity: 0.7 }}>L7 AVG</div>
+              <div style={{ ...hdrStyle, color: "var(--text-muted)", opacity: 0.7 }}>L7 OPS</div>
+              <div />
+            </div>
+            {batters.map(hitterRow)}
+          </div>
+        )}
+
+        {pitchers.length > 0 && (
+          <div style={{ border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "130px 32px 48px 52px 52px 48px 52px 52px 28px", padding: "5px 12px", background: "var(--bg)", borderBottom: "1px solid var(--border)" }}>
+              <div style={{ ...hdrStyle, textAlign: "left" }}>Pitcher</div>
+              <div />
+              <div style={hdrStyle}>ERA</div>
+              <div style={hdrStyle}>WHIP</div>
+              <div style={hdrStyle}>K/9</div>
+              <div style={hdrStyle}>W</div>
+              <div style={{ ...hdrStyle, opacity: 0.7 }}>L7 ERA</div>
+              <div style={{ ...hdrStyle, opacity: 0.7 }}>L7 WHIP</div>
+              <div />
+            </div>
+            {pitchers.map(pitcherRow)}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <PlayerTable players={myPlayers} label="My Team" />
+      <PlayerTable players={oppPlayers} label="Opponent" />
+    </div>
+  );
+}
+
+// ── Schedule tab — weekly calendar ────────────────────────────────────────────
+
+function ScheduleTab({ data, loading }) {
+  if (loading) return <div style={{ padding: 40, textAlign: "center" }}><span className="spinner" /></div>;
+  if (!data) return <div style={{ padding: "20px 0", fontSize: 12, color: "var(--text-muted)" }}>Loading schedule…</div>;
+
+  const { days, summary } = data;
+  const allMyStarters  = new Set(days.flatMap(d => d.myStarts));
+  const allOppStarters = new Set(days.flatMap(d => d.oppStarts));
+  const allMyPlayers   = [...new Set(days.flatMap(d => d.myPlayers))];
+  const allOppPlayers  = [...new Set(days.flatMap(d => d.oppPlayers))];
+
+  const sorted = (players, starters) => [
+    ...players.filter(p => starters.has(p)).sort(),
+    ...players.filter(p => !starters.has(p)).sort(),
+  ];
+
+  const myRoster  = sorted(allMyPlayers,  allMyStarters);
+  const oppRoster = sorted(allOppPlayers, allOppStarters);
+  const dayMap    = Object.fromEntries(days.map(d => [d.date, d]));
+  const colW      = 30;
+  const gridCols  = `110px repeat(${days.length}, ${colW}px) 34px`;
+
+  const hdrCell = (d) => (
+    <div key={d.date} style={{ textAlign: "center", fontSize: 9, fontWeight: d.isToday ? 700 : 500,
+      color: d.isPast ? "var(--text-muted)" : d.isToday ? "var(--text-primary)" : "var(--text-secondary)",
+      background: d.isToday ? "rgba(0,0,0,0.04)" : undefined, padding: "4px 0", borderRadius: 3 }}>
+      <div>{d.label}</div>
+      <div style={{ opacity: 0.7 }}>{d.date.slice(5).replace("-", "/")}</div>
+    </div>
+  );
+
+  const gamesLeft = (name, isMe) =>
+    days.filter(d => !d.isPast && (isMe ? d.myPlayers : d.oppPlayers).includes(name)).length;
+
+  const playerRow = (name, isMe, isLast) => {
+    const isPitcher = (isMe ? allMyStarters : allOppStarters).has(name);
+    const left = gamesLeft(name, isMe);
+    return (
+      <div key={name} style={{ display: "grid", gridTemplateColumns: gridCols, alignItems: "center",
+        padding: "4px 0", borderBottom: isLast ? "none" : "1px solid var(--border)", background: "var(--surface)" }}>
+        <div style={{ fontSize: 11, paddingLeft: 0, display: "flex", alignItems: "center", gap: 4, overflow: "hidden" }}>
+          {isPitcher && <span style={{ fontSize: 8, fontWeight: 700, color: "#5a8a6a" }}>SP</span>}
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name.split(" ").slice(-1)[0]}</span>
+        </div>
+        {days.map(d => {
+          const playing  = (isMe ? d.myPlayers  : d.oppPlayers).includes(name);
+          const starting = (isMe ? d.myStarts   : d.oppStarts).includes(name);
+          return (
+            <div key={d.date} style={{ textAlign: "center", background: d.isToday ? "rgba(0,0,0,0.03)" : undefined }}>
+              {starting ? <span style={{ fontSize: 11, color: d.isPast ? "var(--text-muted)" : "#2d6a4f" }}>⚡</span>
+               : playing ? <span style={{ fontSize: 13, color: d.isPast ? "var(--text-muted)" : "var(--text-primary)", lineHeight: 1 }}>•</span>
+               : <span style={{ fontSize: 9, color: "var(--border)" }}>–</span>}
+            </div>
+          );
+        })}
+        <div style={{ textAlign: "right", fontSize: 10, fontWeight: left > 0 ? 600 : 400,
+          color: left > 0 ? "var(--text-primary)" : "var(--text-muted)", paddingRight: 4 }}>{left}</div>
+      </div>
+    );
+  };
+
+  const tableBlock = (roster, isMe, label) => (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 6 }}>{label}</div>
+      <div style={{ border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: gridCols, padding: "5px 0 4px", background: "var(--bg)", borderBottom: "1px solid var(--border)" }}>
+          <div />
+          {days.map(hdrCell)}
+          <div style={{ textAlign: "right", fontSize: 9, color: "var(--text-muted)", paddingRight: 4 }}>Left</div>
+        </div>
+        {roster.length > 0
+          ? roster.map((name, i) => playerRow(name, isMe, i === roster.length - 1))
+          : <div style={{ padding: "12px 0", textAlign: "center", fontSize: 12, color: "var(--text-muted)" }}>No players found</div>}
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      {/* Summary */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 20 }}>
+        {[{ label: "You", games: summary.myGamesRemaining, starts: summary.myStartsRemaining, accent: "#2d6a4f" },
+          { label: "Opp", games: summary.oppGamesRemaining, starts: summary.oppStartsRemaining, accent: "var(--text-secondary)" }
+        ].map(({ label, games, starts, accent }) => (
+          <div key={label} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 6, padding: "12px 16px" }}>
+            <div style={{ fontSize: 10, fontWeight: 600, color: accent, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>{label}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{games}</div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>games remaining</div>
+            {starts > 0 && <div style={{ marginTop: 5, fontSize: 11, color: "var(--text-secondary)" }}>⚡ {starts} {starts === 1 ? "start" : "starts"} left</div>}
+          </div>
+        ))}
+      </div>
+      {tableBlock(myRoster,  true,  "My Team")}
+      {tableBlock(oppRoster, false, "Opponent")}
     </div>
   );
 }

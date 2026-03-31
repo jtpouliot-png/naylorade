@@ -315,6 +315,217 @@ def get_players_in_game(game_id, roster_names):
     return found
 
 
+# ── Weekly schedule + player→team mapping ────────────────────────────────────
+
+_mlb_players_cache = {"ts": 0, "data": {}}
+MLB_PLAYERS_TTL = 6 * 60 * 60  # 6 hours
+
+_week_sched_cache = {"ts": 0, "week_start": None, "data": []}
+WEEK_SCHED_TTL = 30 * 60  # 30 min
+
+
+def _get_mlb_players():
+    """Return {playerFullName: {id, teamId}} for all active MLB players. Cached 6h."""
+    now = time.time()
+    if now - _mlb_players_cache["ts"] < MLB_PLAYERS_TTL and _mlb_players_cache["data"]:
+        return _mlb_players_cache["data"]
+    try:
+        year = date.today().year
+        resp = requests.get(
+            f"{MLB_BASE}/sports/1/players",
+            params={"season": year},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        result = {}
+        for p in resp.json().get("people", []):
+            name    = p.get("fullName", "")
+            team_id = (p.get("currentTeam") or {}).get("id")
+            pid     = p.get("id")
+            if name and pid:
+                result[name] = {"id": pid, "teamId": team_id}
+        _mlb_players_cache.update({"ts": now, "data": result})
+        print(f"MLB players loaded: {len(result)}", flush=True)
+        return result
+    except Exception as e:
+        print(f"MLB players fetch error: {e}", flush=True)
+        return _mlb_players_cache["data"]
+
+
+def _get_week_schedule():
+    """Get MLB games for the current Mon–Sun scoring week. Cached 30 min."""
+    today      = date.today()
+    week_start = today - timedelta(days=today.weekday())   # Monday
+    week_end   = week_start + timedelta(days=6)             # Sunday
+    start_str  = week_start.strftime("%Y-%m-%d")
+    end_str    = week_end.strftime("%Y-%m-%d")
+
+    now = time.time()
+    if (now - _week_sched_cache["ts"] < WEEK_SCHED_TTL and
+            _week_sched_cache["week_start"] == start_str):
+        return _week_sched_cache["data"]
+
+    try:
+        resp = requests.get(
+            f"{MLB_BASE}/schedule",
+            params={"sportId": 1, "startDate": start_str, "endDate": end_str,
+                    "hydrate": "team,probablePitcher"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        result = []
+        for date_entry in resp.json().get("dates", []):
+            games = []
+            for game in date_entry.get("games", []):
+                home = game.get("teams", {}).get("home", {})
+                away = game.get("teams", {}).get("away", {})
+                games.append({
+                    "homeTeamId":  (home.get("team") or {}).get("id"),
+                    "awayTeamId":  (away.get("team") or {}).get("id"),
+                    "homePitcher": (home.get("probablePitcher") or {}).get("fullName"),
+                    "awayPitcher": (away.get("probablePitcher") or {}).get("fullName"),
+                })
+            result.append({"date": date_entry["date"], "games": games})
+        _week_sched_cache.update({"ts": now, "week_start": start_str, "data": result})
+        return result
+    except Exception as e:
+        print(f"Week schedule fetch error: {e}", flush=True)
+        return _week_sched_cache["data"]
+
+
+# ── Player season + recent stats ──────────────────────────────────────────────
+
+_player_stats_cache = {}  # {player_name: {"ts": float, "data": dict}}
+PLAYER_STATS_TTL = 30 * 60  # 30 min
+
+# ESPN positionId → pitcher flag
+_PITCHER_POSITION_IDS = {11, 12, 13}
+
+def _parse_stat(stats_dict, key, digits=3):
+    """Return float from MLB stats dict, rounding to `digits` decimal places."""
+    val = stats_dict.get(key)
+    if val is None:
+        return None
+    try:
+        return round(float(val), digits)
+    except (ValueError, TypeError):
+        return None
+
+
+def _fetch_player_stats(player_names):
+    """Return {name: {season:{...}, lastSeven:{...}, isPitcher, position}} from MLB API.
+    Fetches in batches of 20; caches per-player for 30 min."""
+    now   = time.time()
+    mlb   = _get_mlb_players()
+    fresh, stale = {}, []
+
+    for name in player_names:
+        cached = _player_stats_cache.get(name)
+        if cached and now - cached["ts"] < PLAYER_STATS_TTL:
+            fresh[name] = cached["data"]
+        elif mlb.get(name, {}).get("id"):
+            stale.append(name)
+
+    if not stale:
+        return fresh
+
+    # Batch by 20 IDs
+    id_map = {mlb[n]["id"]: n for n in stale}
+    chunks = [list(id_map.keys())[i:i+20] for i in range(0, len(id_map), 20)]
+    year   = date.today().year
+
+    for chunk in chunks:
+        try:
+            resp = requests.get(
+                f"{MLB_BASE}/people",
+                params={
+                    "personIds": ",".join(str(i) for i in chunk),
+                    "hydrate": (
+                        f"stats(group=[hitting,pitching],"
+                        f"type=[season,lastXGames],limit=7,season={year}),"
+                        f"currentTeam"
+                    ),
+                },
+                timeout=20,
+            )
+            resp.raise_for_status()
+            for person in resp.json().get("people", []):
+                pid  = person.get("id")
+                name = id_map.get(pid)
+                if not name:
+                    continue
+
+                pos  = (person.get("primaryPosition") or {}).get("abbreviation", "")
+                is_p = pos in ("SP", "RP", "P")
+
+                # Parse stats groups
+                season_hit, season_pit, l7_hit, l7_pit = {}, {}, {}, {}
+                for sg in person.get("stats") or []:
+                    grp   = (sg.get("group") or {}).get("displayName", "")
+                    typ   = (sg.get("type")  or {}).get("displayName", "")
+                    stats = (sg.get("splits") or [{}])[0].get("stat", {})
+                    if typ == "season"      and grp == "hitting":  season_hit = stats
+                    elif typ == "season"    and grp == "pitching": season_pit = stats
+                    elif typ == "lastXGames" and grp == "hitting":  l7_hit    = stats
+                    elif typ == "lastXGames" and grp == "pitching": l7_pit    = stats
+
+                if is_p:
+                    data = {
+                        "isPitcher": True,
+                        "position": pos,
+                        "season": {
+                            "gamesStarted": _parse_stat(season_pit, "gamesStarted", 0),
+                            "inningsPitched": _parse_stat(season_pit, "inningsPitched", 1),
+                            "era":   _parse_stat(season_pit, "era"),
+                            "whip":  _parse_stat(season_pit, "whip"),
+                            "k9":    _parse_stat(season_pit, "strikeoutsPer9Inn"),
+                            "wins":  _parse_stat(season_pit, "wins", 0),
+                            "qualityStarts": _parse_stat(season_pit, "qualityStarts", 0),
+                            "saves": _parse_stat(season_pit, "saves", 0),
+                            "holds": _parse_stat(season_pit, "holds", 0),
+                        },
+                        "lastSeven": {
+                            "inningsPitched": _parse_stat(l7_pit, "inningsPitched", 1),
+                            "era":  _parse_stat(l7_pit, "era"),
+                            "whip": _parse_stat(l7_pit, "whip"),
+                            "k9":   _parse_stat(l7_pit, "strikeoutsPer9Inn"),
+                        },
+                    }
+                else:
+                    data = {
+                        "isPitcher": False,
+                        "position": pos,
+                        "season": {
+                            "games": _parse_stat(season_hit, "gamesPlayed", 0),
+                            "avg":   _parse_stat(season_hit, "avg"),
+                            "obp":   _parse_stat(season_hit, "obp"),
+                            "slg":   _parse_stat(season_hit, "slg"),
+                            "ops":   _parse_stat(season_hit, "ops"),
+                            "hr":    _parse_stat(season_hit, "homeRuns", 0),
+                            "rbi":   _parse_stat(season_hit, "rbi", 0),
+                            "r":     _parse_stat(season_hit, "runs", 0),
+                            "sb":    _parse_stat(season_hit, "stolenBases", 0),
+                        },
+                        "lastSeven": {
+                            "avg": _parse_stat(l7_hit, "avg"),
+                            "obp": _parse_stat(l7_hit, "obp"),
+                            "slg": _parse_stat(l7_hit, "slg"),
+                            "ops": _parse_stat(l7_hit, "ops"),
+                            "hr":  _parse_stat(l7_hit, "homeRuns", 0),
+                            "rbi": _parse_stat(l7_hit, "rbi", 0),
+                            "r":   _parse_stat(l7_hit, "runs", 0),
+                            "sb":  _parse_stat(l7_hit, "stolenBases", 0),
+                        },
+                    }
+
+                fresh[name] = data
+                _player_stats_cache[name] = {"ts": now, "data": data}
+        except Exception as e:
+            print(f"Player stats batch error: {e}", flush=True)
+
+    return fresh
+
+
 # ── Player news ───────────────────────────────────────────────────────────────
 
 _news_cache = {}  # {player_name: {"ts": float, "items": list}}
@@ -522,6 +733,23 @@ def _aggregate_roster_stats(entries):
     return result
 
 
+def _get_team_players(source_data, team_id):
+    """Extract player names + ESPN position IDs for a team from roster data."""
+    for team in source_data.get("teams", []):
+        if team.get("id") == team_id:
+            entries = (team.get("roster") or {}).get("entries", [])
+            result = []
+            for e in entries:
+                pool   = e.get("playerPoolEntry") or {}
+                player = pool.get("player") or {}
+                name   = player.get("fullName")
+                if name:
+                    result.append({
+                        "name":       name,
+                        "positionId": player.get("defaultPositionId"),
+                    })
+            return result
+    return []
 
 
 
@@ -766,6 +994,8 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None, roster_a
         "categories":      categories,
         "leagueWeekStats": league_week_stats,
         "scoringPeriodId": current_period,
+        "myPlayers":       _get_team_players(season_source, my_team_id),
+        "oppPlayers":      _get_team_players(season_source, opp_team_id),
     }
 
 
@@ -883,6 +1113,75 @@ def get_matchup():
         import traceback
         print(f"Matchup error: {traceback.format_exc()}", flush=True)
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/player-stats", methods=["GET"])
+def get_player_stats():
+    names = [p.strip() for p in request.args.get("players", "").split(",") if p.strip()]
+    if not names:
+        return jsonify({"error": "players param required"}), 400
+    try:
+        stats = _fetch_player_stats(names[:40])  # cap at 40 players
+        return jsonify({"stats": stats})
+    except Exception as e:
+        import traceback
+        print(f"Player stats error: {traceback.format_exc()}", flush=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/week-schedule", methods=["GET"])
+def get_week_schedule():
+    my_names  = [p.strip() for p in request.args.get("myPlayers",  "").split(",") if p.strip()]
+    opp_names = [p.strip() for p in request.args.get("oppPlayers", "").split(",") if p.strip()]
+    if not my_names:
+        return jsonify({"error": "myPlayers is required"}), 400
+
+    mlb          = _get_mlb_players()
+    my_team_map  = {n: (mlb.get(n) or {}).get("teamId") for n in my_names}
+    opp_team_map = {n: (mlb.get(n) or {}).get("teamId") for n in opp_names}
+
+    today_str    = date.today().strftime("%Y-%m-%d")
+    week_entries = _get_week_schedule()
+
+    days = []
+    for entry in week_entries:
+        day_str  = entry["date"]
+        playing  = set()
+        pitchers = {}  # {teamId: pitcherName}
+        for g in entry["games"]:
+            for tid_key, pit_key in (("homeTeamId", "homePitcher"), ("awayTeamId", "awayPitcher")):
+                tid = g.get(tid_key)
+                if tid:
+                    playing.add(tid)
+                    if g.get(pit_key):
+                        pitchers[tid] = g[pit_key]
+
+        my_playing  = [n for n in my_names  if my_team_map.get(n)  in playing]
+        opp_playing = [n for n in opp_names if opp_team_map.get(n) in playing]
+        my_starts   = [n for n in my_playing  if pitchers.get(my_team_map[n])  == n]
+        opp_starts  = [n for n in opp_playing if pitchers.get(opp_team_map[n]) == n]
+
+        days.append({
+            "date":       day_str,
+            "label":      datetime.strptime(day_str, "%Y-%m-%d").strftime("%a"),
+            "isToday":    day_str == today_str,
+            "isPast":     day_str < today_str,
+            "myPlayers":  my_playing,
+            "oppPlayers": opp_playing,
+            "myStarts":   my_starts,
+            "oppStarts":  opp_starts,
+        })
+
+    remaining = [d for d in days if not d["isPast"]]
+    return jsonify({
+        "days": days,
+        "summary": {
+            "myGamesRemaining":   sum(len(d["myPlayers"])  for d in remaining),
+            "oppGamesRemaining":  sum(len(d["oppPlayers"]) for d in remaining),
+            "myStartsRemaining":  sum(len(d["myStarts"])   for d in remaining),
+            "oppStartsRemaining": sum(len(d["oppStarts"])  for d in remaining),
+        },
+    })
 
 
 @app.route("/api/health", methods=["GET"])

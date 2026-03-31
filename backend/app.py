@@ -980,6 +980,38 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None, roster_a
         entries = (team.get("roster") or {}).get("entries", [])
         all_season_stats[tid] = _aggregate_roster_stats(entries)
 
+    # If we only got one team's data (mDraftDetail), fall back to aggregating all periods
+    # from the schedule — gives all 12 teams' season-to-date stats without needing mRoster.
+    if len(all_season_stats) < 2:
+        all_season_stats = {}
+        for matchup in all_schedule:
+            for side_key in ("home", "away"):
+                side = matchup.get(side_key) or {}
+                tid = side.get("teamId")
+                if not tid:
+                    continue
+                sbs = (side.get("cumulativeScore") or {}).get("scoreByStat") or {}
+                if tid not in all_season_stats:
+                    all_season_stats[tid] = {}
+                for sid_str, entry in sbs.items():
+                    val = (entry.get("score") if isinstance(entry, dict) else entry) or 0
+                    try:
+                        key = int(sid_str)
+                        all_season_stats[tid][key] = all_season_stats[tid].get(key, 0) + val
+                    except (ValueError, TypeError):
+                        pass
+        # Recompute rate stats from accumulated counting-stat components
+        for s in all_season_stats.values():
+            ab, h  = s.get(0, 0), s.get(1, 0)
+            ip     = s.get(34, 0)
+            ha, bba = s.get(37, 0), s.get(39, 0)
+            er, k  = s.get(38, 0), s.get(48, 0)
+            if ab: s[2]  = round(h / ab, 4)
+            if ip: s[41] = round((ha + bba) / ip, 4)
+            if ip: s[47] = round(9 * er / ip, 2)
+            if ip: s[49] = round(9 * k / ip, 2)
+        print(f"all_season_stats fallback: {len(all_season_stats)} teams from schedule", flush=True)
+
     all_stat_id_strs = set(my_sbs.keys()) | set(opp_sbs.keys())
     categories = []
     league_week_stats = []

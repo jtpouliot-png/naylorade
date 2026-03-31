@@ -446,8 +446,9 @@ def _fetch_player_stats(player_names):
         return fresh
 
     # Batch by 20 IDs
+    id_map  = {pid: name for name, pid in stale}
     all_ids = list(id_map.keys())
-    chunks = [all_ids[i:i+20] for i in range(0, len(all_ids), 20)]
+    chunks  = [all_ids[i:i+20] for i in range(0, len(all_ids), 20)]
     year   = date.today().year
 
     for chunk in chunks:

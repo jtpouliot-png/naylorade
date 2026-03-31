@@ -441,8 +441,8 @@ def _fetch_player_stats(player_names):
                 params={
                     "personIds": ",".join(str(i) for i in chunk),
                     "hydrate": (
-                        f"stats(group=[hitting,pitching],"
-                        f"type=[season,lastXGames],limit=7,season={year}),"
+                        f"stats(group=[hitting,pitching],type=season,season={year}),"
+                        f"stats(group=[hitting,pitching],type=lastXGames,limit=7,season={year}),"
                         f"currentTeam"
                     ),
                 },
@@ -760,6 +760,28 @@ def _get_team_players(source_data, team_id):
     return []
 
 
+def _get_opp_players(season_source, opp_side, opp_team_id):
+    """Get opponent players — tries season_source first, falls back to matchup roster entries."""
+    result = _get_team_players(season_source, opp_team_id)
+    if result:
+        return result
+    # Fallback: extract from the matchup side's rosterForCurrentScoringPeriod
+    # (present in mMatchupScore / mMatchup views)
+    entries = (opp_side or {}).get("rosterForCurrentScoringPeriod", {}).get("entries", [])
+    fallback = []
+    for e in entries:
+        pool   = e.get("playerPoolEntry") or {}
+        player = pool.get("player") or {}
+        name   = player.get("fullName")
+        if name:
+            fallback.append({
+                "name":       name,
+                "positionId": player.get("defaultPositionId"),
+            })
+    print(f"_get_opp_players fallback via matchup roster: {len(fallback)} players", flush=True)
+    return fallback
+
+
 
 def _fix_rate_stats(sbs):
     """Compute stats ESPN stores as 0 or omits:
@@ -1003,7 +1025,7 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None, roster_a
         "leagueWeekStats": league_week_stats,
         "scoringPeriodId": current_period,
         "myPlayers":       _get_team_players(season_source, my_team_id),
-        "oppPlayers":      _get_team_players(season_source, opp_team_id),
+        "oppPlayers":      _get_opp_players(season_source, opp_side, opp_team_id),
     }
 
 

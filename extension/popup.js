@@ -189,7 +189,9 @@ async function fetchESPNLeagueData(leagueId) {
         }
 
         return {
-          rosterData: JSON.parse(d.roster || d.draft),
+          // Prefer rosterApiData (fresh mRoster with all teams) as the roster source;
+          // fall back to intercepted mRoster or mDraftDetail (which may only have your team)
+          rosterData: rosterApiData || JSON.parse(d.roster || d.draft),
           matchupData: d.matchup ? JSON.parse(d.matchup) : null,
           rosterApiData,
         };

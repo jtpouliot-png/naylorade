@@ -475,11 +475,16 @@ def _fetch_player_stats(player_names):
     chunks  = [all_ids[i:i+20] for i in range(0, len(all_ids), 20)]
     year    = date.today().year
 
+    today  = date.today()
+    l7_start = (today - timedelta(days=7)).strftime("%m/%d/%Y")
+    l7_end   = today.strftime("%m/%d/%Y")
+    l7_extra = {"startDate": l7_start, "endDate": l7_end}
+
     for chunk in chunks:
-        szn_hit = _mlb_stats(chunk, "season",     "hitting",  year)
-        szn_pit = _mlb_stats(chunk, "season",     "pitching", year)
-        l7_hit  = _mlb_stats(chunk, "lastXGames", "hitting",  year, {"limit": 7})
-        l7_pit  = _mlb_stats(chunk, "lastXGames", "pitching", year, {"limit": 7})
+        szn_hit = _mlb_stats(chunk, "season",      "hitting",  year)
+        szn_pit = _mlb_stats(chunk, "season",      "pitching", year)
+        l7_hit  = _mlb_stats(chunk, "byDateRange", "hitting",  year, l7_extra)
+        l7_pit  = _mlb_stats(chunk, "byDateRange", "pitching", year, l7_extra)
         print(f"player-stats chunk={len(chunk)} szn_hit={len(szn_hit)} szn_pit={len(szn_pit)} l7_hit={len(l7_hit)} l7_pit={len(l7_pit)}", flush=True)
 
         for pid in chunk:

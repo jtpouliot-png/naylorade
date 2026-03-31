@@ -838,10 +838,11 @@ function RosterTab({ myPlayers, oppPlayers, stats, loading }) {
       </div>
     );
 
-    // Classify by MLB position from stats if available, fall back to ESPN positionId
+    // Pitcher if MLB API says so, OR if ESPN positionId is SP/RP/P (11/12/13)
     const isPitcherPos = id => id != null && [11, 12, 13].includes(Number(id));
-    const pitchers = players.filter(p => (stats?.[p.name]?.isPitcher) || (!stats?.[p.name] && isPitcherPos(p.positionId)));
-    const batters  = players.filter(p => !(stats?.[p.name]?.isPitcher) && !(!stats?.[p.name] && isPitcherPos(p.positionId)));
+    const isPit = p => !!(stats?.[p.name]?.isPitcher) || isPitcherPos(p.positionId);
+    const pitchers = players.filter(isPit);
+    const batters  = players.filter(p => !isPit(p));
 
     const hitterRow = (p) => {
       const s = stats?.[p.name];

@@ -419,12 +419,38 @@ def _parse_stat(stats_dict, key, digits=3):
         return None
 
 
+def _mlb_stats(ids, stat_type, group, year, extra=None):
+    """Fetch MLB /api/v1/stats for a list of player IDs. Returns {playerId: statDict}."""
+    params = {
+        "stats":     stat_type,
+        "group":     group,
+        "season":    year,
+        "gameType":  "R",
+        "playerIds": ",".join(str(i) for i in ids),
+    }
+    if extra:
+        params.update(extra)
+    try:
+        r = requests.get(f"{MLB_BASE}/stats", params=params, timeout=15)
+        r.raise_for_status()
+        result = {}
+        for sg in r.json().get("stats", []):
+            for split in sg.get("splits", []):
+                pid = (split.get("player") or {}).get("id")
+                if pid:
+                    result[pid] = split.get("stat", {})
+        return result
+    except Exception as e:
+        print(f"MLB stats {stat_type}/{group}: {e}", flush=True)
+        return {}
+
+
 def _fetch_player_stats(player_names):
-    """Return {name: {season:{...}, lastSeven:{...}, isPitcher, position}} from MLB API.
-    Fetches in batches of 20; caches per-player for 30 min."""
-    now   = time.time()
-    mlb   = _get_mlb_players()
-    norm  = _mlb_players_cache.get("norm", {})
+    """Return {name: {season:{...}, lastSeven:{...}, isPitcher}} from MLB API.
+    Uses /api/v1/stats endpoint (more reliable than /people hydrate). Cached 30 min."""
+    now  = time.time()
+    mlb  = _get_mlb_players()
+    norm = _mlb_players_cache.get("norm", {})
     fresh, stale = {}, []
 
     not_found = []
@@ -433,7 +459,6 @@ def _fetch_player_stats(player_names):
         if cached and now - cached["ts"] < PLAYER_STATS_TTL:
             fresh[name] = cached["data"]
             continue
-        # Exact match first, then accent-stripped fallback
         info = mlb.get(name) or mlb.get(norm.get(_ascii(name), ""))
         if info and info.get("id"):
             stale.append((name, info["id"]))
@@ -441,111 +466,83 @@ def _fetch_player_stats(player_names):
             not_found.append(name)
 
     if not_found:
-        print(f"player-stats not found in MLB lookup ({len(not_found)}): {not_found[:8]}", flush=True)
+        print(f"player-stats not found ({len(not_found)}): {not_found[:8]}", flush=True)
     if not stale:
         return fresh
 
-    # Batch by 20 IDs
     id_map  = {pid: name for name, pid in stale}
     all_ids = list(id_map.keys())
     chunks  = [all_ids[i:i+20] for i in range(0, len(all_ids), 20)]
-    year   = date.today().year
+    year    = date.today().year
 
     for chunk in chunks:
-        try:
-            resp = requests.get(
-                f"{MLB_BASE}/people",
-                params={
-                    "personIds": ",".join(str(i) for i in chunk),
-                    "hydrate": (
-                        f"stats(group=[hitting,pitching],type=season,season={year}),"
-                        f"stats(group=[hitting,pitching],type=lastXGames,limit=7,season={year}),"
-                        f"currentTeam"
-                    ),
-                },
-                timeout=20,
-            )
-            resp.raise_for_status()
-            people = resp.json().get("people", [])
-            print(f"player-stats batch {len(chunk)} ids → {len(people)} people returned", flush=True)
-            if people:
-                sample = people[0]
-                print(f"  sample name={sample.get('fullName')} stats_groups={[s.get('type',{}).get('displayName') for s in (sample.get('stats') or [])]}", flush=True)
-            for person in people:
-                pid  = person.get("id")
-                name = id_map.get(pid)
-                if not name:
-                    continue
+        szn_hit = _mlb_stats(chunk, "season",     "hitting",  year)
+        szn_pit = _mlb_stats(chunk, "season",     "pitching", year)
+        l7_hit  = _mlb_stats(chunk, "lastXGames", "hitting",  year, {"limit": 7})
+        l7_pit  = _mlb_stats(chunk, "lastXGames", "pitching", year, {"limit": 7})
+        print(f"player-stats chunk={len(chunk)} szn_hit={len(szn_hit)} szn_pit={len(szn_pit)} l7_hit={len(l7_hit)} l7_pit={len(l7_pit)}", flush=True)
 
-                pos  = (person.get("primaryPosition") or {}).get("abbreviation", "")
-                is_p = pos in ("SP", "RP", "P")
+        for pid in chunk:
+            name = id_map.get(pid)
+            if not name:
+                continue
+            sh = szn_hit.get(pid, {})
+            sp = szn_pit.get(pid, {})
+            lh = l7_hit.get(pid, {})
+            lp = l7_pit.get(pid, {})
 
-                # Parse stats groups — MLB API returns "Season" / "Last X Games" (mixed case)
-                season_hit, season_pit, l7_hit, l7_pit = {}, {}, {}, {}
-                for sg in person.get("stats") or []:
-                    grp  = (sg.get("group") or {}).get("displayName", "").lower()
-                    typ  = (sg.get("type")  or {}).get("displayName", "").lower()
-                    stat = (sg.get("splits") or [{}])[0].get("stat", {})
-                    is_szn = "season" in typ and "last" not in typ
-                    is_l7  = "last"   in typ
-                    if is_szn and grp == "hitting":   season_hit = stat
-                    elif is_szn and grp == "pitching": season_pit = stat
-                    elif is_l7  and grp == "hitting":  l7_hit     = stat
-                    elif is_l7  and grp == "pitching": l7_pit     = stat
+            # Pitcher if they have any recorded innings pitched
+            is_p = float(sp.get("inningsPitched") or 0) > 0
 
-                if is_p:
-                    data = {
-                        "isPitcher": True,
-                        "position": pos,
-                        "season": {
-                            "gamesStarted": _parse_stat(season_pit, "gamesStarted", 0),
-                            "inningsPitched": _parse_stat(season_pit, "inningsPitched", 1),
-                            "era":   _parse_stat(season_pit, "era"),
-                            "whip":  _parse_stat(season_pit, "whip"),
-                            "k9":    _parse_stat(season_pit, "strikeoutsPer9Inn"),
-                            "wins":  _parse_stat(season_pit, "wins", 0),
-                            "qualityStarts": _parse_stat(season_pit, "qualityStarts", 0),
-                            "saves": _parse_stat(season_pit, "saves", 0),
-                            "holds": _parse_stat(season_pit, "holds", 0),
-                        },
-                        "lastSeven": {
-                            "inningsPitched": _parse_stat(l7_pit, "inningsPitched", 1),
-                            "era":  _parse_stat(l7_pit, "era"),
-                            "whip": _parse_stat(l7_pit, "whip"),
-                            "k9":   _parse_stat(l7_pit, "strikeoutsPer9Inn"),
-                        },
-                    }
-                else:
-                    data = {
-                        "isPitcher": False,
-                        "position": pos,
-                        "season": {
-                            "games": _parse_stat(season_hit, "gamesPlayed", 0),
-                            "avg":   _parse_stat(season_hit, "avg"),
-                            "obp":   _parse_stat(season_hit, "obp"),
-                            "slg":   _parse_stat(season_hit, "slg"),
-                            "ops":   _parse_stat(season_hit, "ops"),
-                            "hr":    _parse_stat(season_hit, "homeRuns", 0),
-                            "rbi":   _parse_stat(season_hit, "rbi", 0),
-                            "r":     _parse_stat(season_hit, "runs", 0),
-                            "sb":    _parse_stat(season_hit, "stolenBases", 0),
-                        },
-                        "lastSeven": {
-                            "avg": _parse_stat(l7_hit, "avg"),
-                            "obp": _parse_stat(l7_hit, "obp"),
-                            "slg": _parse_stat(l7_hit, "slg"),
-                            "ops": _parse_stat(l7_hit, "ops"),
-                            "hr":  _parse_stat(l7_hit, "homeRuns", 0),
-                            "rbi": _parse_stat(l7_hit, "rbi", 0),
-                            "r":   _parse_stat(l7_hit, "runs", 0),
-                            "sb":  _parse_stat(l7_hit, "stolenBases", 0),
-                        },
-                    }
+            if is_p:
+                data = {
+                    "isPitcher": True,
+                    "season": {
+                        "gamesStarted":  _parse_stat(sp, "gamesStarted",  0),
+                        "inningsPitched": _parse_stat(sp, "inningsPitched", 1),
+                        "era":  _parse_stat(sp, "era"),
+                        "whip": _parse_stat(sp, "whip"),
+                        "k9":   _parse_stat(sp, "strikeoutsPer9Inn"),
+                        "wins": _parse_stat(sp, "wins", 0),
+                        "qualityStarts": _parse_stat(sp, "qualityStarts", 0),
+                        "saves": _parse_stat(sp, "saves", 0),
+                        "holds": _parse_stat(sp, "holds", 0),
+                    },
+                    "lastSeven": {
+                        "inningsPitched": _parse_stat(lp, "inningsPitched", 1),
+                        "era":  _parse_stat(lp, "era"),
+                        "whip": _parse_stat(lp, "whip"),
+                        "k9":   _parse_stat(lp, "strikeoutsPer9Inn"),
+                    },
+                }
+            else:
+                data = {
+                    "isPitcher": False,
+                    "season": {
+                        "games": _parse_stat(sh, "gamesPlayed", 0),
+                        "avg":   _parse_stat(sh, "avg"),
+                        "obp":   _parse_stat(sh, "obp"),
+                        "slg":   _parse_stat(sh, "slg"),
+                        "ops":   _parse_stat(sh, "ops"),
+                        "hr":    _parse_stat(sh, "homeRuns", 0),
+                        "rbi":   _parse_stat(sh, "rbi", 0),
+                        "r":     _parse_stat(sh, "runs", 0),
+                        "sb":    _parse_stat(sh, "stolenBases", 0),
+                    },
+                    "lastSeven": {
+                        "avg": _parse_stat(lh, "avg"),
+                        "obp": _parse_stat(lh, "obp"),
+                        "slg": _parse_stat(lh, "slg"),
+                        "ops": _parse_stat(lh, "ops"),
+                        "hr":  _parse_stat(lh, "homeRuns", 0),
+                        "rbi": _parse_stat(lh, "rbi", 0),
+                        "r":   _parse_stat(lh, "runs", 0),
+                        "sb":  _parse_stat(lh, "stolenBases", 0),
+                    },
+                }
 
-                fresh[name] = data
-                _player_stats_cache[name] = {"ts": now, "data": data}
-        except Exception as e:
-            print(f"Player stats batch error: {e}", flush=True)
+            fresh[name] = data
+            _player_stats_cache[name] = {"ts": now, "data": data}
 
     return fresh
 

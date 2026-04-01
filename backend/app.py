@@ -760,6 +760,16 @@ def _aggregate_roster_stats(entries):
         num_total = sum(raw.get(sid, 0) for sid in defn["num"])
         den_total = sum(raw.get(sid, 0) for sid in defn["den"])
         result[stat_id] = (num_total / den_total * defn["mult"]) if den_total > 0 else None
+    # SLG: not in RATE_STAT_COMPONENTS (non-standard formula) — compute from components
+    ab = raw.get(0, 0)
+    if ab:
+        h, doubles = raw.get(1, 0), raw.get(25, 0)
+        triples, hr = raw.get(24, 0), raw.get(5, 0)
+        result[4] = round((h + doubles + 2 * triples + 3 * hr) / ab, 4)
+    # SVHD: SV + HLD
+    sv, hld = raw.get(57, 0), raw.get(83, 0)
+    if sv or hld:
+        result[74] = sv + hld
     return result
 
 
@@ -1011,8 +1021,8 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None, roster_a
             sv, hld     = s.get(57, 0), s.get(83, 0)
             # AVG: ESPN doesn't include in scoreByStat — must compute
             if ab: s[2] = round(h / ab, 4)
-            # SLG: ESPN stores as 0 — compute from components
-            if ab: s[4] = round((h + doubles + 2 * triples + 3 * hr) / ab, 4)
+            # SLG: only recompute if ESPN stored 0 (mirrors _fix_rate_stats logic)
+            if ab and not s.get(4): s[4] = round((h + doubles + 2 * triples + 3 * hr) / ab, 4)
             # WHIP/K9: accumulate correctly from counting components across periods
             if ip: s[41] = round((ha + bba) / ip, 4)
             if ip: s[49] = round(9 * k / ip, 2)

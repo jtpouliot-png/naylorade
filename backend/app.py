@@ -1048,6 +1048,10 @@ def process_espn_matchup(roster_data, matchup_data, swid, team_id=None, roster_a
         my_stat  = my_sbs.get(stat_id_str)  or {}
         opp_stat = opp_sbs.get(stat_id_str) or {}
 
+        # Skip stats ESPN doesn't score in this league (no WIN/LOSS/TIE result)
+        if not my_stat.get("result") and not opp_stat.get("result"):
+            continue
+
         period_vals = {
             tid: (stats.get(stat_id_str) or {}).get("score")
             for tid, stats in all_period_stats.items()

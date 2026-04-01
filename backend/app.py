@@ -708,10 +708,10 @@ ESPN_STAT_MAP = {
     20: ("R",    "Runs",             False),
     21: ("RBI",  "RBIs",             False),
     23: ("SB",   "Stolen Bases",     False),
-    24: ("TB",   "Total Bases",      False),
+    24: ("3B",   "Triples",           False),  # confirmed: used as triples in SLG formula
     25: ("2B",   "Doubles",          False),
-    33: ("3B",   "Triples",          False),
-    34: ("IP",   "Innings Pitched",  False),
+    33: ("TB",   "Total Bases",      False),  # stat_id 33 appears to be TB
+    34: ("IP",   "Innings Pitched",  False),  # higher = better (more innings pitched)
     37: ("HA",   "Hits Allowed",     True),
     38: ("ER",   "Earned Runs",      True),
     39: ("BBA",  "BB Allowed",       True),
